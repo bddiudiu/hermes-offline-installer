@@ -1,0 +1,18 @@
+model:
+  default: gpt-4o-mini
+
+api_server_port: 8642
+
+dashboard:
+  port: 9119
+
+platform_toolsets:
+  api_server:
+    - hermes-api-server
+
+terminal:
+  backend: local
+
+platforms:
+  api_server:
+    enabled: true

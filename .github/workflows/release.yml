@@ -1,0 +1,67 @@
+name: Build Hermes Offline Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      hermes_source:
+        description: "Hermes package spec"
+        required: false
+        default: "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: mac-arm64
+          - os: macos-13
+            target: mac-x64
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: windows-latest
+            target: win-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip uv
+
+      - name: Build wheelhouse
+        shell: bash
+        env:
+          HERMES_SOURCE: ${{ github.event.inputs.hermes_source || 'hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git' }}
+        run: python packaging/build_wheelhouse.py --platform "${{ matrix.target }}" --output build/wheelhouse
+
+      - name: Build bundle
+        shell: bash
+        run: python packaging/build_bundle.py --platform "${{ matrix.target }}" --wheelhouse build/wheelhouse --output dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-offline-installer-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
