@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,17 +15,6 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(cmd, check=True, env=env)
 
 
-def ensure_uv() -> str:
-    uv = shutil.which("uv")
-    if uv:
-        return uv
-    run([sys.executable, "-m", "pip", "install", "uv"])
-    uv = shutil.which("uv")
-    if uv:
-        return uv
-    raise SystemExit("uv 安装后仍不可用")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线 wheelhouse")
     parser.add_argument("--platform", required=True, help="目标平台，例如 mac-arm64、linux-x64、win-x64")
@@ -37,7 +25,6 @@ def main() -> None:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
-    uv = ensure_uv()
     hermes_spec = HERMES_SOURCE
     if args.extras:
         if " @ " in HERMES_SOURCE:
@@ -53,7 +40,8 @@ def main() -> None:
     env["GIT_TERMINAL_PROMPT"] = "0"
 
     run([
-        uv,
+        sys.executable,
+        "-m",
         "pip",
         "download",
         "--python-version",
