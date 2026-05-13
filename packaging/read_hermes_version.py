@@ -23,6 +23,18 @@ def wheel_version(wheel: Path, distribution: str) -> str | None:
     return parts[1]
 
 
+def source_archive_version(archive: Path, distribution: str) -> str | None:
+    for suffix in [".tar.gz", ".zip"]:
+        if archive.name.endswith(suffix):
+            stem = archive.name[: -len(suffix)]
+            parts = stem.split("-")
+            for index in range(1, len(parts)):
+                name = "-".join(parts[:index])
+                if normalize_distribution_name(name) == normalize_distribution_name(distribution):
+                    return "-".join(parts[index:])
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Read a package version from a wheelhouse")
     parser.add_argument("--wheelhouse", required=True, type=Path)
@@ -32,8 +44,9 @@ def main() -> None:
     versions = sorted(
         {
             version
-            for wheel in args.wheelhouse.glob("*.whl")
-            if (version := wheel_version(wheel, args.distribution))
+            for artifact in args.wheelhouse.iterdir()
+            if (version := wheel_version(artifact, args.distribution))
+            or (version := source_archive_version(artifact, args.distribution))
         }
     )
     if not versions:
