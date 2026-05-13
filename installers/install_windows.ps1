@@ -12,7 +12,7 @@ New-Item -ItemType Directory -Force -Path $RuntimeDir, $BinDir, $HermesHome | Ou
 
 $Wheelhouse = Join-Path $BundleDir "wheelhouse"
 if (-not (Test-Path $Wheelhouse)) {
-  throw "缺少 wheelhouse：$Wheelhouse"
+  throw "Missing wheelhouse: $Wheelhouse"
 }
 
 Copy-Item -Recurse -Force $Wheelhouse (Join-Path $RuntimeDir "wheelhouse")
@@ -34,7 +34,7 @@ if (-not $PythonBin) {
 }
 
 if (-not $PythonBin) {
-  throw "未找到包内 Python runtime。请确认 bundle\runtime\python 已包含 portable Python。"
+  throw "Bundled Python runtime was not found. Please ensure bundle\runtime\python contains portable Python."
 }
 
 & $PythonBin -m venv $VenvDir
@@ -43,7 +43,11 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $HermesExe = Join-Path $VenvDir "Scripts\hermes.exe"
-Set-Content -Path $HermesCmd -Encoding ASCII -Value "@echo off`r`n`"$HermesExe`" %*`r`n"
+$ShimLines = @(
+  "@echo off",
+  ('"{0}" %*' -f $HermesExe)
+)
+Set-Content -Path $HermesCmd -Encoding ASCII -Value $ShimLines
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
@@ -57,12 +61,13 @@ if (-not (Test-Path $EnvPath)) {
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($UserPath -split ";") -notcontains $BinDir) {
-  [Environment]::SetEnvironmentVariable("Path", "$UserPath;$BinDir", "User")
+  $NewUserPath = if ($UserPath) { "$UserPath;$BinDir" } else { $BinDir }
+  [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
 }
 
 & $HermesCmd version
 
-Write-Host "Hermes Agent 已安装。"
+Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
 Write-Host "config: $ConfigPath"
-Write-Host "请重新打开 PowerShell 让 PATH 生效。"
+Write-Host "Please reopen PowerShell for PATH changes to take effect."

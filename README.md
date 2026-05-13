@@ -31,10 +31,10 @@ hermes version
 
 ### Windows
 
-解压 zip 后，在 PowerShell 中运行：
+解压 zip 后，直接双击或在命令行运行根目录的安装入口：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\installers\install_windows.ps1
+```cmd
+install_windows.cmd
 ```
 
 重新打开 PowerShell，验证：

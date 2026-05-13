@@ -45,6 +45,12 @@ def chmod_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def write_windows_powershell_scripts_with_bom(bundle: Path) -> None:
+    for script in bundle.rglob("*.ps1"):
+        content = script.read_text(encoding="utf-8-sig")
+        script.write_text(content, encoding="utf-8-sig", newline="\r\n")
+
+
 def prepare_uv(platform_name: str, bundle: Path) -> None:
     target = UV_TARGETS[platform_name]
     suffix = "zip" if platform_name.startswith("win") else "tar.gz"
@@ -100,6 +106,9 @@ def main() -> None:
     for script in [bundle / "installers" / "install_unix.sh", bundle / "scripts" / "verify_unix.sh"]:
         if script.exists():
             chmod_executable(script)
+    if args.platform.startswith("win"):
+        write_windows_powershell_scripts_with_bom(bundle)
+        shutil.copy2(bundle / "installers" / "install_windows.cmd", bundle / "install_windows.cmd")
 
     prepare_uv(args.platform, bundle)
     prepare_python_runtime(bundle)
