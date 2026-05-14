@@ -9,6 +9,14 @@ from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
 
+WINDOWS_GATEWAY_REQUIREMENTS = [
+    # Required by the api_server platform enabled in templates/config.yaml.
+    "aiohttp==3.13.3",
+    # Required by Hermes dashboard/web tooling used by ClawPanel integrations.
+    "fastapi==0.133.1",
+    "uvicorn[standard]==0.41.0",
+]
+
 
 def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(cmd), flush=True)
@@ -46,8 +54,13 @@ def main() -> None:
         else:
             hermes_spec = f"hermes-agent[{args.extras}]"
 
+    extra_requirements = []
+    if args.platform == "win-x64":
+        extra_requirements.extend(WINDOWS_GATEWAY_REQUIREMENTS)
+
     requirements = output / "requirements.txt"
-    requirements.write_text(f"{hermes_spec}\ncroniter\nsetuptools>=61.0\n", encoding="utf-8")
+    requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *extra_requirements]
+    requirements.write_text("\n".join(requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"

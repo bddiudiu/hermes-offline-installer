@@ -48,9 +48,18 @@ if (-not $PythonBin) {
 
 & $PythonBin -m venv $VenvDir
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter
+$GatewayPackages = @(
+  "aiohttp==3.13.3",
+  "fastapi==0.133.1",
+  "uvicorn[standard]==0.41.0"
+)
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter @GatewayPackages
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
+}
+& $VenvPython -c "import aiohttp, fastapi, uvicorn"
+if ($LASTEXITCODE -ne 0) {
+  throw "Gateway dependency check failed with exit code $LASTEXITCODE."
 }
 
 $HermesExe = Join-Path $VenvDir "Scripts\hermes.exe"
