@@ -8,6 +8,9 @@ RUNTIME_DIR="$INSTALL_ROOT/runtime"
 BIN_DIR="$HOME/.local/bin"
 HERMES_HOME="$HOME/.hermes"
 VENV_DIR="$RUNTIME_DIR/venv"
+RUNTIME_WHEELHOUSE="$RUNTIME_DIR/wheelhouse"
+RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
+RUNTIME_BUNDLE="$RUNTIME_DIR/bundle-runtime"
 
 mkdir -p "$RUNTIME_DIR" "$BIN_DIR" "$HERMES_HOME"
 
@@ -16,16 +19,17 @@ if [ ! -d "$BUNDLE_DIR/wheelhouse" ]; then
   exit 1
 fi
 
-cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_DIR/"
-cp -R "$BUNDLE_DIR/templates" "$RUNTIME_DIR/"
-cp -R "$BUNDLE_DIR/runtime" "$RUNTIME_DIR/bundle-runtime"
+rm -rf "$RUNTIME_WHEELHOUSE" "$RUNTIME_TEMPLATES" "$RUNTIME_BUNDLE" "$VENV_DIR"
+cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_WHEELHOUSE"
+cp -R "$BUNDLE_DIR/templates" "$RUNTIME_TEMPLATES"
+cp -R "$BUNDLE_DIR/runtime" "$RUNTIME_BUNDLE"
 
 PYTHON_BIN="${HERMES_PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then
   for candidate in \
-    "$RUNTIME_DIR/bundle-runtime/python/bin/python3" \
-    "$RUNTIME_DIR/bundle-runtime/python/bin/python" \
-    "$RUNTIME_DIR/bundle-runtime/python/python"; do
+    "$RUNTIME_BUNDLE/python/bin/python3" \
+    "$RUNTIME_BUNDLE/python/bin/python" \
+    "$RUNTIME_BUNDLE/python/python"; do
     if [ -x "$candidate" ]; then
       PYTHON_BIN="$candidate"
       break
@@ -40,7 +44,7 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
-"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_DIR/wheelhouse" hermes-agent croniter
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" hermes-agent croniter
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
@@ -54,11 +58,11 @@ EOF
 chmod +x "$BIN_DIR/hermes"
 
 if [ ! -f "$HERMES_HOME/config.yaml" ]; then
-  cp "$RUNTIME_DIR/templates/config.yaml" "$HERMES_HOME/config.yaml"
+  cp "$RUNTIME_TEMPLATES/config.yaml" "$HERMES_HOME/config.yaml"
 fi
 
 if [ ! -f "$HERMES_HOME/.env" ]; then
-  cp "$RUNTIME_DIR/templates/env.template" "$HERMES_HOME/.env"
+  cp "$RUNTIME_TEMPLATES/env.template" "$HERMES_HOME/.env"
 fi
 
 "$BIN_DIR/hermes" version

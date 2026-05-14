@@ -7,6 +7,9 @@ $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
 $HermesHome = Join-Path $env:USERPROFILE ".hermes"
 $VenvDir = Join-Path $RuntimeDir "venv"
+$RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
+$RuntimeTemplates = Join-Path $RuntimeDir "templates"
+$RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir, $BinDir, $HermesHome | Out-Null
 
@@ -15,15 +18,16 @@ if (-not (Test-Path $Wheelhouse)) {
   throw "Missing wheelhouse: $Wheelhouse"
 }
 
-Copy-Item -Recurse -Force $Wheelhouse (Join-Path $RuntimeDir "wheelhouse")
-Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") (Join-Path $RuntimeDir "templates")
-Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") (Join-Path $RuntimeDir "bundle-runtime")
+Remove-Item -Recurse -Force $RuntimeWheelhouse, $RuntimeTemplates, $RuntimeBundle, $VenvDir -ErrorAction SilentlyContinue
+Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
+Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") $RuntimeTemplates
+Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
 
 $PythonBin = $env:HERMES_PYTHON
 if (-not $PythonBin) {
   $Candidates = @(
-    (Join-Path $RuntimeDir "bundle-runtime\python\python.exe"),
-    (Join-Path $RuntimeDir "bundle-runtime\python\bin\python.exe")
+    (Join-Path $RuntimeBundle "python\python.exe"),
+    (Join-Path $RuntimeBundle "python\bin\python.exe")
   )
   foreach ($Candidate in $Candidates) {
     if (Test-Path $Candidate) {
@@ -39,7 +43,7 @@ if (-not $PythonBin) {
 
 & $PythonBin -m venv $VenvDir
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links (Join-Path $RuntimeDir "wheelhouse") hermes-agent croniter
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
@@ -57,12 +61,12 @@ Set-Content -Path $HermesCmd -Encoding ASCII -Value $ShimLines
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
-  Copy-Item (Join-Path $RuntimeDir "templates\config.yaml") $ConfigPath
+  Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
 
 $EnvPath = Join-Path $HermesHome ".env"
 if (-not (Test-Path $EnvPath)) {
-  Copy-Item (Join-Path $RuntimeDir "templates\env.template") $EnvPath
+  Copy-Item (Join-Path $RuntimeTemplates "env.template") $EnvPath
 }
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
