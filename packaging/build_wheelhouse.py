@@ -15,6 +15,19 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(cmd, check=True, env=env)
 
 
+def remove_source_archives(output: Path, distribution: str) -> None:
+    prefixes = {
+        distribution.replace("_", "-").lower(),
+        distribution.replace("-", "_").lower(),
+    }
+    for artifact in output.iterdir():
+        name = artifact.name.lower()
+        if not (name.endswith(".zip") or name.endswith(".tar.gz")):
+            continue
+        if any(name.startswith(f"{prefix}-") for prefix in prefixes):
+            artifact.unlink()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线 wheelhouse")
     parser.add_argument("--platform", required=True, help="目标平台，例如 mac-arm64、linux-x64、win-x64")
@@ -34,7 +47,7 @@ def main() -> None:
             hermes_spec = f"hermes-agent[{args.extras}]"
 
     requirements = output / "requirements.txt"
-    requirements.write_text(f"{hermes_spec}\ncroniter\n", encoding="utf-8")
+    requirements.write_text(f"{hermes_spec}\ncroniter\nsetuptools>=61.0\n", encoding="utf-8")
 
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -52,6 +65,17 @@ def main() -> None:
         "-r",
         str(requirements),
     ], env=env)
+    run([
+        sys.executable,
+        "-m",
+        "pip",
+        "wheel",
+        "--wheel-dir",
+        str(output),
+        "--no-deps",
+        hermes_spec,
+    ], env=env)
+    remove_source_archives(output, "hermes-agent")
 
     write_manifest(
         output / "manifest.json",

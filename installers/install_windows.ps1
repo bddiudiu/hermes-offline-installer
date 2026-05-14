@@ -39,10 +39,16 @@ if (-not $PythonBin) {
 
 & $PythonBin -m venv $VenvDir
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-& $VenvPython -m pip install --no-index --find-links (Join-Path $RuntimeDir "wheelhouse") hermes-agent croniter
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links (Join-Path $RuntimeDir "wheelhouse") hermes-agent croniter
+if ($LASTEXITCODE -ne 0) {
+  throw "pip install failed with exit code $LASTEXITCODE."
+}
 
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $HermesExe = Join-Path $VenvDir "Scripts\hermes.exe"
+if (-not (Test-Path $HermesExe)) {
+  throw "Hermes executable was not created: $HermesExe"
+}
 $ShimLines = @(
   "@echo off",
   ('"{0}" %*' -f $HermesExe)
@@ -66,6 +72,9 @@ if (($UserPath -split ";") -notcontains $BinDir) {
 }
 
 & $HermesCmd version
+if ($LASTEXITCODE -ne 0) {
+  throw "Hermes version check failed with exit code $LASTEXITCODE."
+}
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"

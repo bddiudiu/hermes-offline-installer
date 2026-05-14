@@ -40,7 +40,12 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
-"$VENV_PYTHON" -m pip install --no-index --find-links "$RUNTIME_DIR/wheelhouse" hermes-agent croniter
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_DIR/wheelhouse" hermes-agent croniter
+
+if [ ! -x "$VENV_DIR/bin/hermes" ]; then
+  echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
+  exit 1
+fi
 
 cat > "$BIN_DIR/hermes" <<EOF
 #!/usr/bin/env bash
