@@ -1,6 +1,12 @@
 @echo off
 setlocal
 
+if not "%HERMES_INSTALLER_KEEP_OPEN%"=="1" if not "%HERMES_NO_RELAUNCH%"=="1" (
+  set "HERMES_INSTALLER_KEEP_OPEN=1"
+  start "Hermes Agent Offline Installer" cmd.exe /k call "%~f0" %*
+  exit /b 0
+)
+
 title Hermes Agent Offline Installer
 set "SCRIPT_DIR=%~dp0"
 set "INSTALL_PS1=%SCRIPT_DIR%install_windows.ps1"

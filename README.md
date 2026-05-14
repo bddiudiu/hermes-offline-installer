@@ -34,6 +34,14 @@ hermes version
 install_windows.cmd
 ```
 
+脚本会打开一个保留输出的命令行窗口。自动化运行时如需禁止重新打开窗口：
+
+```cmd
+set HERMES_NO_RELAUNCH=1
+set HERMES_NO_PAUSE=1
+install_windows.cmd
+```
+
 重新打开 PowerShell，验证：
 
 ```powershell
