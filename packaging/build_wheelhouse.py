@@ -14,7 +14,7 @@ WINDOWS_GATEWAY_REQUIREMENTS = [
     "aiohttp==3.13.3",
     # Required by Hermes dashboard/web tooling used by ClawPanel integrations.
     "fastapi==0.133.1",
-    "uvicorn[standard]==0.41.0",
+    "uvicorn==0.41.0",
 ]
 
 

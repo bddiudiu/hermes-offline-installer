@@ -51,7 +51,7 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $GatewayPackages = @(
   "aiohttp==3.13.3",
   "fastapi==0.133.1",
-  "uvicorn[standard]==0.41.0"
+  "uvicorn==0.41.0"
 )
 & $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter @GatewayPackages
 if ($LASTEXITCODE -ne 0) {
