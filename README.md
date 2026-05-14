@@ -6,11 +6,8 @@ Hermes Offline Installer 是一个独立的一键离线安装项目，用于把 
 
 ## 产物
 
-GitHub Actions 会按平台生成：
+GitHub Actions 当前优先生成 Windows 安装包：
 
-- `hermes-offline-installer-mac-arm64.tar.gz`
-- `hermes-offline-installer-mac-x64.tar.gz`
-- `hermes-offline-installer-linux-x64.tar.gz`
 - `hermes-offline-installer-win-x64.zip`
 
 ## 使用方式
