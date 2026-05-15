@@ -15,6 +15,8 @@ WINDOWS_GATEWAY_REQUIREMENTS = [
     # Required by Hermes dashboard/web tooling used by ClawPanel integrations.
     "fastapi==0.133.1",
     "uvicorn==0.41.0",
+    # Required by tools.browser_dialog_tool; harmless unless that tool is used.
+    "websockets",
 ]
 
 
