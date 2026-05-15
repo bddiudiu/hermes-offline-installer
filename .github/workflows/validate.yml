@@ -1,0 +1,41 @@
+name: Validate Offline Installer
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate scripts and packaging
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Python packaging scripts
+        run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py
+
+      - name: Check Windows installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "installers/install_windows.ps1",
+            [ref] $tokens,
+            [ref] $errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+
