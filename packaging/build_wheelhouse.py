@@ -19,6 +19,13 @@ WINDOWS_GATEWAY_REQUIREMENTS = [
     "websockets",
 ]
 
+WINDOWS_REQUIRED_WHEELS = [
+    "aiohttp",
+    "fastapi",
+    "uvicorn",
+    "websockets",
+]
+
 
 def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(cmd), flush=True)
@@ -36,6 +43,26 @@ def remove_source_archives(output: Path, distribution: str) -> None:
             continue
         if any(name.startswith(f"{prefix}-") for prefix in prefixes):
             artifact.unlink()
+
+
+def validate_required_wheels(output: Path, distributions: list[str]) -> None:
+    missing = []
+    for distribution in distributions:
+        prefixes = {
+            distribution.replace("_", "-").lower(),
+            distribution.replace("-", "_").lower(),
+        }
+        found = any(
+            artifact.suffix == ".whl"
+            and any(artifact.name.lower().startswith(f"{prefix}-") for prefix in prefixes)
+            for artifact in output.iterdir()
+        )
+        if not found:
+            missing.append(distribution)
+    if missing:
+        raise SystemExit(
+            "Missing required wheelhouse artifacts: " + ", ".join(sorted(missing))
+        )
 
 
 def main() -> None:
@@ -91,6 +118,8 @@ def main() -> None:
         hermes_spec,
     ], env=env)
     remove_source_archives(output, "hermes-agent")
+    if args.platform == "win-x64":
+        validate_required_wheels(output, WINDOWS_REQUIRED_WHEELS)
 
     write_manifest(
         output / "manifest.json",
