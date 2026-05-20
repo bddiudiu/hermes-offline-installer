@@ -59,6 +59,34 @@ python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelh
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
+## OSS 发布
+
+GitHub Actions 会在创建 GitHub Release 后上传同一批产物到 Aliyun OSS，并生成：
+
+```text
+hermes/latest.json
+```
+
+默认前缀为 `hermes`，版本产物会上传到：
+
+```text
+hermes/<hermes-agent-version>/
+```
+
+`latest.json` 会采用和 `openclaw-standalone` 相同的轻量结构，`editions.en.base_url` 指向当前 Windows zip 下载地址。
+
+需要配置的 GitHub Secrets：
+
+- `ALIYUN_OSS_BUCKET`
+- `ALIYUN_OSS_ENDPOINT`
+- `ALIYUN_OSS_ACCESS_KEY_ID`
+- `ALIYUN_OSS_ACCESS_KEY_SECRET`
+- `ALIYUN_OSS_PUBLIC_BASE_URL`
+
+可选 GitHub Variable：
+
+- `ALIYUN_OSS_PREFIX`
+
 ## 安装位置
 
 - runtime：`~/.hermes-offline/runtime`

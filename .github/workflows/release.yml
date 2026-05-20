@@ -51,6 +51,16 @@ jobs:
         shell: bash
         run: python packaging/build_bundle.py --platform "${{ matrix.target }}" --wheelhouse build/wheelhouse --output dist
 
+      - name: Generate checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for file in *.zip *.tar.gz; do
+            [ -e "$file" ] || continue
+            sha256sum "$file" > "$file.sha256"
+          done
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -108,3 +118,138 @@ jobs:
             Hermes Agent version: ${{ steps.release.outputs.hermes_version }}
             GitHub Actions run: ${{ github.run_number }}
           files: release-assets/*
+
+  upload-oss:
+    name: Upload to OSS
+    runs-on: ubuntu-latest
+    needs: [build, release]
+    env:
+      ALIYUN_OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+      ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+      ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+      ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+      ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL }}
+      ALIYUN_OSS_PREFIX: ${{ vars.ALIYUN_OSS_PREFIX || 'hermes' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hermes-offline-installer-*
+          path: upload
+          merge-multiple: true
+
+      - name: Download version artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hermes-agent-version-*
+          path: versions
+
+      - name: Prepare OSS metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(find versions -name hermes-agent-version.txt -print -quit | xargs cat | tr -d '[:space:]')"
+          if [ -z "$version" ]; then
+            echo "Hermes Agent version is empty" >&2
+            exit 1
+          fi
+          path_prefix="${ALIYUN_OSS_PREFIX%/}/${version}"
+          {
+            echo "hermes_version=$version"
+            echo "path_prefix=$path_prefix"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ALIYUN_OSS_PUBLIC_BASE_URL:-}" ]; then
+            echo "ALIYUN_OSS_PUBLIC_BASE_URL is required" >&2
+            exit 1
+          fi
+          version="${{ steps.meta.outputs.hermes_version }}"
+          path_prefix="${{ steps.meta.outputs.path_prefix }}"
+          zip_name="$(find upload -maxdepth 1 -type f -name 'hermes-offline-installer-win-x64.zip' -print -quit)"
+          if [ -z "$zip_name" ]; then
+            echo "Windows zip not found in upload/" >&2
+            exit 1
+          fi
+          zip_name="$(basename "$zip_name")"
+          cat > upload/latest.json <<EOF
+          {
+            "date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "editions": {
+              "en": { "version": "$version", "base_url": "${ALIYUN_OSS_PUBLIC_BASE_URL%/}/$path_prefix/$zip_name" }
+            }
+          }
+          EOF
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install OSS SDK
+        run: python -m pip install oss2
+
+      - name: Upload files to OSS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          import os
+          from pathlib import Path
+
+          import oss2
+
+          required = [
+              "ALIYUN_OSS_BUCKET",
+              "ALIYUN_OSS_ENDPOINT",
+              "ALIYUN_OSS_ACCESS_KEY_ID",
+              "ALIYUN_OSS_ACCESS_KEY_SECRET",
+          ]
+          missing = [name for name in required if not os.environ.get(name)]
+          if missing:
+              raise SystemExit(f"Missing OSS environment variables: {', '.join(missing)}")
+
+          endpoint = os.environ["ALIYUN_OSS_ENDPOINT"].strip()
+          if "://" not in endpoint:
+              endpoint = f"https://{endpoint}"
+
+          prefix = os.environ.get("ALIYUN_OSS_PREFIX", "hermes").strip("/")
+          path_prefix = "${{ steps.meta.outputs.path_prefix }}"
+
+          auth = oss2.Auth(os.environ["ALIYUN_OSS_ACCESS_KEY_ID"], os.environ["ALIYUN_OSS_ACCESS_KEY_SECRET"])
+          bucket = oss2.Bucket(auth, endpoint, os.environ["ALIYUN_OSS_BUCKET"])
+
+          failed = []
+          for path in sorted(Path("upload").iterdir()):
+              if not path.is_file() or path.name == "latest.json":
+                  continue
+              object_key = f"{path_prefix}/{path.name}"
+              print(f"Uploading {path.name} -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{object_key}")
+              result = bucket.put_object_from_file(object_key, str(path))
+              status = getattr(result, "status", None)
+              if not (status and 200 <= status < 300):
+                  failed.append(f"{path.name} (status={status})")
+
+          latest_key = f"{prefix}/latest.json"
+          print(f"Uploading latest.json -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{latest_key}")
+          result = bucket.put_object_from_file(
+              latest_key,
+              "upload/latest.json",
+              headers={"Content-Type": "application/json"},
+          )
+          status = getattr(result, "status", None)
+          if not (status and 200 <= status < 300):
+              failed.append(f"latest.json (status={status})")
+
+          if failed:
+              raise SystemExit("Upload failed for: " + ", ".join(failed))
+
+          print("OSS upload complete")
+          PY
