@@ -20,6 +20,14 @@ cd hermes-offline-installer-<platform>
 ./installers/install_unix.sh
 ```
 
+如需自定义安装位置，可在安装时传入环境变量：
+
+```bash
+HERMES_HOME=/data/hermes \
+HERMES_OFFLINE_HOME=/data/hermes-runtime \
+./installers/install_unix.sh
+```
+
 安装后重新打开终端，验证：
 
 ```bash
@@ -32,6 +40,14 @@ hermes version
 
 ```cmd
 install_windows.cmd
+```
+
+如需自定义安装位置，可在 PowerShell 中传入环境变量后运行安装脚本：
+
+```powershell
+$env:HERMES_HOME="D:\Hermes\home"
+$env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
+.\installers\install_windows.ps1
 ```
 
 脚本会打开一个保留输出的命令行窗口。自动化运行时如需禁止重新打开窗口：
@@ -89,16 +105,17 @@ hermes/<hermes-agent-version>/
 
 ## 安装位置
 
-- runtime：`~/.hermes-offline/runtime`
+- runtime：默认 `~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 调整
 - shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`
-- Hermes 配置：`~/.hermes/config.yaml` 与 `~/.hermes/.env`
+- Hermes 配置：默认 `~/.hermes/config.yaml` 与 `~/.hermes/.env`，Windows 默认为 `%USERPROFILE%\.hermes\config.yaml` 与 `%USERPROFILE%\.hermes\.env`，可通过 `HERMES_HOME` 调整
+- 后续用户插件、skills、日志和状态文件会跟随 Hermes 使用的 `HERMES_HOME`
 
 ## 配置模型
 
 安装器只创建最小配置和环境变量模板，不写入用户 API Key。安装后请编辑：
 
 ```text
-~/.hermes/.env
+$HERMES_HOME/.env
 ```
 
 ## 说明

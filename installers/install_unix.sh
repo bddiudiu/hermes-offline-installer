@@ -6,7 +6,7 @@ BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_ROOT="${HERMES_OFFLINE_HOME:-$HOME/.hermes-offline}"
 RUNTIME_DIR="$INSTALL_ROOT/runtime"
 BIN_DIR="$HOME/.local/bin"
-HERMES_HOME="$HOME/.hermes"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 VENV_DIR="$RUNTIME_DIR/venv"
 RUNTIME_WHEELHOUSE="$RUNTIME_DIR/wheelhouse"
 RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
@@ -51,9 +51,13 @@ if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   exit 1
 fi
 
+HERMES_HOME_SH="$(printf '%q' "$HERMES_HOME")"
+HERMES_BIN_SH="$(printf '%q' "$VENV_DIR/bin/hermes")"
+
 cat > "$BIN_DIR/hermes" <<EOF
 #!/usr/bin/env bash
-exec "$VENV_DIR/bin/hermes" "\$@"
+export HERMES_HOME=$HERMES_HOME_SH
+exec $HERMES_BIN_SH "\$@"
 EOF
 chmod +x "$BIN_DIR/hermes"
 

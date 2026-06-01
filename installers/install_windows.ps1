@@ -8,7 +8,7 @@ $BinDir = Join-Path $InstallRoot "bin"
 $LocalBinDir = Join-Path $env:USERPROFILE ".local\bin"
 $UvToolsBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "uv\tools\bin" } else { $null }
 $ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } else { $null }
-$HermesHome = Join-Path $env:USERPROFILE ".hermes"
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
 $VenvDir = Join-Path $RuntimeDir "venv"
 $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
 $RuntimeTemplates = Join-Path $RuntimeDir "templates"
@@ -69,6 +69,7 @@ if (-not (Test-Path $HermesExe)) {
 }
 $ShimLines = @(
   "@echo off",
+  ('set "HERMES_HOME={0}"' -f $HermesHome),
   ('"{0}" %*' -f $HermesExe)
 )
 foreach ($ShimDir in $ShimDirs) {
@@ -77,6 +78,8 @@ foreach ($ShimDir in $ShimDirs) {
   Copy-Item -Force $HermesExe (Join-Path $ShimDir "hermes.exe")
 }
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
+$env:HERMES_HOME = $HermesHome
+[Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
