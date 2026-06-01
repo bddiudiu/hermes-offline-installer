@@ -20,13 +20,18 @@ cd hermes-offline-installer-<platform>
 ./installers/install_unix.sh
 ```
 
-如需自定义安装位置，可在安装时传入环境变量：
+如需自定义安装位置，可在安装时传入环境变量。下面的命令可直接复制运行，其中：
+
+- `HERMES_HOME` 控制 Hermes 配置、插件、skills、日志和状态文件位置
+- `HERMES_OFFLINE_HOME` 控制离线 runtime、venv 和 shim 位置
 
 ```bash
 HERMES_HOME=/data/hermes \
 HERMES_OFFLINE_HOME=/data/hermes-runtime \
 ./installers/install_unix.sh
 ```
+
+也可以把 `/data/hermes` 和 `/data/hermes-runtime` 替换成自己的目录。
 
 安装后重新打开终端，验证：
 
