@@ -45,6 +45,12 @@ hermes dashboard
 解压 zip 后，直接双击或在命令行运行根目录的安装入口：
 
 ```cmd
+install.cmd
+```
+
+也可以使用兼容入口：
+
+```cmd
 install_windows.cmd
 ```
 
