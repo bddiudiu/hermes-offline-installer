@@ -9,17 +9,17 @@ from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
 
-WINDOWS_GATEWAY_REQUIREMENTS = [
+OFFLINE_RUNTIME_REQUIREMENTS = [
     # Required by the api_server platform enabled in templates/config.yaml.
     "aiohttp==3.13.3",
-    # Required by Hermes dashboard/web tooling used by ClawPanel integrations.
+    # Required by `hermes dashboard`.
     "fastapi==0.133.1",
     "uvicorn==0.41.0",
-    # Required by tools.browser_dialog_tool; harmless unless that tool is used.
+    # Required by dashboard/API websocket endpoints and tools.browser_dialog_tool.
     "websockets",
 ]
 
-WINDOWS_REQUIRED_WHEELS = [
+OFFLINE_REQUIRED_WHEELS = [
     "aiohttp",
     "fastapi",
     "uvicorn",
@@ -83,12 +83,8 @@ def main() -> None:
         else:
             hermes_spec = f"hermes-agent[{args.extras}]"
 
-    extra_requirements = []
-    if args.platform == "win-x64":
-        extra_requirements.extend(WINDOWS_GATEWAY_REQUIREMENTS)
-
     requirements = output / "requirements.txt"
-    requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *extra_requirements]
+    requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
     requirements.write_text("\n".join(requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
@@ -118,8 +114,7 @@ def main() -> None:
         hermes_spec,
     ], env=env)
     remove_source_archives(output, "hermes-agent")
-    if args.platform == "win-x64":
-        validate_required_wheels(output, WINDOWS_REQUIRED_WHEELS)
+    validate_required_wheels(output, OFFLINE_REQUIRED_WHEELS)
 
     write_manifest(
         output / "manifest.json",

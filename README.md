@@ -37,6 +37,7 @@ HERMES_OFFLINE_HOME=/data/hermes-runtime \
 
 ```bash
 hermes version
+hermes dashboard
 ```
 
 ### Windows
@@ -69,6 +70,7 @@ install_windows.cmd
 
 ```powershell
 hermes version
+hermes dashboard
 ```
 
 ## 构建
@@ -81,6 +83,8 @@ hermes version
 python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelhouse
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
+
+离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。
 
 ## OSS 发布
 

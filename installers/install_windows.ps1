@@ -48,13 +48,13 @@ if (-not $PythonBin) {
 
 & $PythonBin -m venv $VenvDir
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-$GatewayPackages = @(
+$RuntimePackages = @(
   "aiohttp==3.13.3",
   "fastapi==0.133.1",
   "uvicorn==0.41.0",
   "websockets"
 )
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter @GatewayPackages
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter @RuntimePackages
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }

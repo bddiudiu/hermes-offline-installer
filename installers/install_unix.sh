@@ -44,7 +44,13 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
-"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" hermes-agent croniter
+RUNTIME_PACKAGES=(
+  "aiohttp==3.13.3"
+  "fastapi==0.133.1"
+  "uvicorn==0.41.0"
+  "websockets"
+)
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" hermes-agent croniter "${RUNTIME_PACKAGES[@]}"
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
