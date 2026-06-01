@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+unset PYTHONHOME PYTHONPATH
 INSTALL_ROOT="${HERMES_OFFLINE_HOME:-$HOME/.hermes-offline}"
 RUNTIME_DIR="$INSTALL_ROOT/runtime"
 BIN_DIR="$HOME/.local/bin"
@@ -24,17 +25,28 @@ cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_WHEELHOUSE"
 cp -R "$BUNDLE_DIR/templates" "$RUNTIME_TEMPLATES"
 cp -R "$BUNDLE_DIR/runtime" "$RUNTIME_BUNDLE"
 
-PYTHON_BIN="${HERMES_PYTHON:-}"
-if [ -z "$PYTHON_BIN" ]; then
-  for candidate in \
-    "$RUNTIME_BUNDLE/python/bin/python3" \
-    "$RUNTIME_BUNDLE/python/bin/python" \
-    "$RUNTIME_BUNDLE/python/python"; do
-    if [ -x "$candidate" ]; then
-      PYTHON_BIN="$candidate"
-      break
-    fi
-  done
+PYTHON_BIN=""
+REQUESTED_PYTHON="${HERMES_PYTHON:-}"
+for candidate in \
+  "$RUNTIME_BUNDLE/python/bin/python3" \
+  "$RUNTIME_BUNDLE/python/bin/python" \
+  "$RUNTIME_BUNDLE/python/python"; do
+  if [ -z "$PYTHON_BIN" ] && [ -x "$candidate" ]; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PYTHON_BIN" ] && [ -n "$REQUESTED_PYTHON" ] && [ -x "$REQUESTED_PYTHON" ]; then
+  requested_real="$(cd "$(dirname "$REQUESTED_PYTHON")" && pwd -P)/$(basename "$REQUESTED_PYTHON")"
+  venv_real="$(mkdir -p "$VENV_DIR" && cd "$VENV_DIR" && pwd -P)"
+  if [[ "$requested_real" != "$venv_real"/* ]]; then
+    PYTHON_BIN="$requested_real"
+  else
+    echo "Ignoring HERMES_PYTHON because it points inside the install venv: $requested_real"
+  fi
+elif [ -z "$PYTHON_BIN" ] && [ -n "$REQUESTED_PYTHON" ]; then
+  echo "Ignoring unavailable HERMES_PYTHON: $REQUESTED_PYTHON"
 fi
 
 if [ -z "$PYTHON_BIN" ]; then

@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BundleDir = Resolve-Path (Join-Path $ScriptDir "..")
 $InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
@@ -28,26 +31,48 @@ Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
 Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") $RuntimeTemplates
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
 
-$PythonBin = $env:HERMES_PYTHON
-if (-not $PythonBin) {
-  $Candidates = @(
-    (Join-Path $RuntimeBundle "python\python.exe"),
-    (Join-Path $RuntimeBundle "python\bin\python.exe")
-  )
-  foreach ($Candidate in $Candidates) {
-    if (Test-Path $Candidate) {
-      $PythonBin = $Candidate
-      break
-    }
+$Candidates = @(
+  (Join-Path $RuntimeBundle "python\python.exe"),
+  (Join-Path $RuntimeBundle "python\bin\python.exe")
+)
+$PythonBin = $null
+foreach ($Candidate in $Candidates) {
+  if (-not $PythonBin -and (Test-Path $Candidate)) {
+    $PythonBin = $Candidate
+    break
   }
+}
+
+$RequestedPython = $env:HERMES_PYTHON
+if (-not $PythonBin -and $RequestedPython -and (Test-Path $RequestedPython)) {
+  $RequestedPythonPath = (Resolve-Path $RequestedPython).Path
+  $VenvDirPath = [System.IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
+  if (-not $RequestedPythonPath.StartsWith($VenvDirPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $PythonBin = $RequestedPythonPath
+  } else {
+    Write-Host "Ignoring HERMES_PYTHON because it points inside the install venv: $RequestedPythonPath"
+  }
+} elseif (-not $PythonBin -and $RequestedPython) {
+  Write-Host "Ignoring unavailable HERMES_PYTHON: $RequestedPython"
 }
 
 if (-not $PythonBin) {
   throw "Bundled Python runtime was not found. Please ensure bundle\runtime\python contains portable Python."
 }
 
+& $PythonBin -c "import encodings"
+if ($LASTEXITCODE -ne 0) {
+  throw "Bundled Python failed to import the standard library encodings module. Check PYTHONHOME/PYTHONPATH and the bundled runtime."
+}
+
 & $PythonBin -m venv $VenvDir
+if ($LASTEXITCODE -ne 0) {
+  throw "Python venv creation failed with exit code $LASTEXITCODE."
+}
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
+  throw "Python venv was not created correctly: $VenvDir"
+}
 $RuntimePackages = @(
   "aiohttp==3.13.3",
   "fastapi==0.133.1",
