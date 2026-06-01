@@ -60,15 +60,18 @@ if (-not $PythonBin) {
   throw "Bundled Python runtime was not found. Please ensure bundle\runtime\python contains portable Python."
 }
 
+$BundledPythonHome = Split-Path -Parent $PythonBin
+$env:PYTHONHOME = $BundledPythonHome
 & $PythonBin -c "import encodings"
 if ($LASTEXITCODE -ne 0) {
-  throw "Bundled Python failed to import the standard library encodings module. Check PYTHONHOME/PYTHONPATH and the bundled runtime."
+  throw "Bundled Python failed to import the standard library encodings module from $BundledPythonHome."
 }
 
 & $PythonBin -m venv $VenvDir
 if ($LASTEXITCODE -ne 0) {
   throw "Python venv creation failed with exit code $LASTEXITCODE."
 }
+Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"

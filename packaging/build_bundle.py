@@ -70,6 +70,35 @@ def prepare_python_runtime(bundle: Path) -> None:
     copytree(candidates[-1], python_dest)
 
 
+def validate_python_runtime(platform_name: str, bundle: Path) -> None:
+    if platform_name.startswith("win"):
+        candidates = [
+            bundle / "runtime" / "python" / "python.exe",
+            bundle / "runtime" / "python" / "bin" / "python.exe",
+        ]
+    else:
+        candidates = [
+            bundle / "runtime" / "python" / "bin" / "python3",
+            bundle / "runtime" / "python" / "bin" / "python",
+            bundle / "runtime" / "python" / "python",
+        ]
+    python = next((candidate for candidate in candidates if candidate.exists()), None)
+    if python is None:
+        raise SystemExit(f"未找到 bundle Python executable: {bundle / 'runtime' / 'python'}")
+
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    if platform_name.startswith("win"):
+        env["PYTHONHOME"] = str(python.parent)
+    subprocess.run(
+        [str(python), "-c", "import encodings, venv"],
+        check=True,
+        cwd=bundle,
+        env=env,
+    )
+
+
 def archive_bundle(platform_name: str, bundle: Path, output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     if platform_name.startswith("win"):
@@ -112,6 +141,7 @@ def main() -> None:
 
     prepare_uv(args.platform, bundle)
     prepare_python_runtime(bundle)
+    validate_python_runtime(args.platform, bundle)
     write_manifest(bundle / "manifest.json", target_platform=args.platform, extra={"kind": "bundle"})
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
