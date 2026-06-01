@@ -24,6 +24,12 @@ jobs:
       - name: Check Python packaging scripts
         run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py
 
+      - name: Check Unix shell script syntax
+        shell: bash
+        run: |
+          bash -n installers/install_unix.sh
+          bash -n scripts/verify_unix.sh
+
       - name: Check Windows installer syntax
         shell: pwsh
         run: |
@@ -38,4 +44,3 @@ jobs:
             $errors | Format-List | Out-String | Write-Error
             exit 1
           }
-
