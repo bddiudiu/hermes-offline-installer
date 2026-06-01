@@ -104,7 +104,12 @@ $ShimLines = @(
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
-  Copy-Item -Force $HermesExe (Join-Path $ShimDir "hermes.exe")
+  $ShimExe = Join-Path $ShimDir "hermes.exe"
+  try {
+    Copy-Item -Force $HermesExe $ShimExe
+  } catch {
+    Write-Warning "Could not update $ShimExe. It may be in use by another process. The hermes.cmd and hermes.bat shims were updated and can still launch Hermes."
+  }
 }
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome
