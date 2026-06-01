@@ -53,10 +53,12 @@ fi
 
 HERMES_HOME_SH="$(printf '%q' "$HERMES_HOME")"
 HERMES_BIN_SH="$(printf '%q' "$VENV_DIR/bin/hermes")"
+HERMES_PYTHON_SH="$(printf '%q' "$VENV_PYTHON")"
 
 cat > "$BIN_DIR/hermes" <<EOF
 #!/usr/bin/env bash
 export HERMES_HOME=$HERMES_HOME_SH
+export HERMES_PYTHON=$HERMES_PYTHON_SH
 exec $HERMES_BIN_SH "\$@"
 EOF
 chmod +x "$BIN_DIR/hermes"

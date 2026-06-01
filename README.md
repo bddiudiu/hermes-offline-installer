@@ -55,6 +55,8 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
+Windows 安装器会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量；重新打开 PowerShell/CMD 后生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
+
 脚本会打开一个保留输出的命令行窗口。自动化运行时如需禁止重新打开窗口：
 
 ```cmd
@@ -114,6 +116,17 @@ hermes/<hermes-agent-version>/
 - shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`
 - Hermes 配置：默认 `~/.hermes/config.yaml` 与 `~/.hermes/.env`，Windows 默认为 `%USERPROFILE%\.hermes\config.yaml` 与 `%USERPROFILE%\.hermes\.env`，可通过 `HERMES_HOME` 调整
 - 后续用户插件、skills、日志和状态文件会跟随 Hermes 使用的 `HERMES_HOME`
+- Hermes Python：Unix shim 会自动设置 `HERMES_PYTHON`；Windows 安装器会把 `HERMES_PYTHON` 写入用户环境变量
+
+如果 Windows 已安装后查看可选依赖时提示 Hermes Python 解释器未找到，可先运行：
+
+```powershell
+$HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
+[Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $HermesOfflineHome, "User")
+[Environment]::SetEnvironmentVariable("HERMES_PYTHON", (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe"), "User")
+```
+
+然后重新打开 PowerShell/CMD 再试。
 
 ## 配置模型
 

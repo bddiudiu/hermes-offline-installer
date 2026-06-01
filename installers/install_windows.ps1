@@ -70,6 +70,7 @@ if (-not (Test-Path $HermesExe)) {
 $ShimLines = @(
   "@echo off",
   ('set "HERMES_HOME={0}"' -f $HermesHome),
+  ('set "HERMES_PYTHON={0}"' -f $VenvPython),
   ('"{0}" %*' -f $HermesExe)
 )
 foreach ($ShimDir in $ShimDirs) {
@@ -79,7 +80,11 @@ foreach ($ShimDir in $ShimDirs) {
 }
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome
+$env:HERMES_OFFLINE_HOME = $InstallRoot
+$env:HERMES_PYTHON = $VenvPython
 [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
+[Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $InstallRoot, "User")
+[Environment]::SetEnvironmentVariable("HERMES_PYTHON", $VenvPython, "User")
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
