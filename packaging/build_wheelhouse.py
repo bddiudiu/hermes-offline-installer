@@ -74,9 +74,12 @@ def prepare_hermes_source(hermes_spec: str, work_dir: Path) -> str:
     web_dir = source_dir / "web"
     if not web_dir.is_dir():
         raise SystemExit(f"Hermes source has no web directory: {web_dir}")
+    npm = shutil.which("npm")
+    if not npm:
+        raise SystemExit("npm not found. Install Node.js before building the dashboard frontend.")
     npm_env = os.environ | {"npm_config_audit": "false", "npm_config_fund": "false"}
-    run(["npm", "ci"], cwd=web_dir, env=npm_env)
-    run(["npm", "run", "build"], cwd=web_dir, env=os.environ.copy())
+    run([npm, "ci"], cwd=web_dir, env=npm_env)
+    run([npm, "run", "build"], cwd=web_dir, env=os.environ.copy())
     dist_index = source_dir / "hermes_cli" / "web_dist" / "index.html"
     if not dist_index.exists():
         raise SystemExit(f"Dashboard frontend build did not create {dist_index}")
