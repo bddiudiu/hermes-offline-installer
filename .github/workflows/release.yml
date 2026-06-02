@@ -101,6 +101,11 @@ jobs:
           pattern: hermes-agent-version-*
           path: versions
 
+      - name: Checkout release history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Prepare release metadata
         id: release
         shell: bash
@@ -112,9 +117,21 @@ jobs:
             exit 1
           fi
           tag="v${version}-${GITHUB_RUN_NUMBER}"
+          previous_tag="$(git tag --list 'v*' --sort=-creatordate | head -n 1 || true)"
+          if [ -n "$previous_tag" ]; then
+            changes="$(git log --pretty=format:'- %s (%h)' "${previous_tag}..HEAD")"
+          else
+            changes="$(git log --pretty=format:'- %s (%h)' -n 20)"
+          fi
+          if [ -z "$changes" ]; then
+            changes="- No repository changes detected for this build."
+          fi
           {
             echo "hermes_version=$version"
             echo "tag=$tag"
+            echo "changes<<EOF"
+            echo "$changes"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create release
@@ -125,6 +142,9 @@ jobs:
           body: |
             Hermes Agent version: ${{ steps.release.outputs.hermes_version }}
             GitHub Actions run: ${{ github.run_number }}
+
+            Changes in this build:
+            ${{ steps.release.outputs.changes }}
           files: release-assets/*
 
   upload-oss:
@@ -165,9 +185,11 @@ jobs:
             echo "Hermes Agent version is empty" >&2
             exit 1
           fi
-          path_prefix="${ALIYUN_OSS_PREFIX%/}/${version}"
+          build_version="${version}-${GITHUB_RUN_NUMBER}"
+          path_prefix="${ALIYUN_OSS_PREFIX%/}/${build_version}"
           {
             echo "hermes_version=$version"
+            echo "build_version=$build_version"
             echo "path_prefix=$path_prefix"
           } >> "$GITHUB_OUTPUT"
 
@@ -179,7 +201,7 @@ jobs:
             echo "ALIYUN_OSS_PUBLIC_BASE_URL is required" >&2
             exit 1
           fi
-          version="${{ steps.meta.outputs.hermes_version }}"
+          version="${{ steps.meta.outputs.build_version }}"
           path_prefix="${{ steps.meta.outputs.path_prefix }}"
           zip_name="$(find upload -maxdepth 1 -type f -name 'hermes-offline-installer-win-x64.zip' -print -quit)"
           if [ -z "$zip_name" ]; then
