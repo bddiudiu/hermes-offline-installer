@@ -64,7 +64,17 @@ $BundledPythonHome = Split-Path -Parent $PythonBin
 $env:PYTHONHOME = $BundledPythonHome
 & $PythonBin -c "import encodings"
 if ($LASTEXITCODE -ne 0) {
-  throw "Bundled Python failed to import the standard library encodings module from $BundledPythonHome."
+  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+  $EncodingsDir = Get-ChildItem -Path $BundledPythonHome -Recurse -Directory -Filter "encodings" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($EncodingsDir) {
+    $env:PYTHONPATH = $EncodingsDir.Parent.FullName
+    & $PythonBin -c "import encodings"
+  }
+  if ($LASTEXITCODE -ne 0) {
+    $PythonZip = Join-Path $BundledPythonHome "python311.zip"
+    $LibEncodings = Join-Path $BundledPythonHome "Lib\encodings"
+    throw "Bundled Python failed to import encodings. PYTHONHOME=$BundledPythonHome; python311.zip exists=$(Test-Path $PythonZip); Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
+  }
 }
 
 & $PythonBin -m venv $VenvDir
@@ -72,6 +82,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "Python venv creation failed with exit code $LASTEXITCODE."
 }
 Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"

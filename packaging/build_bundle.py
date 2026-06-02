@@ -86,6 +86,13 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
     if python is None:
         raise SystemExit(f"未找到 bundle Python executable: {bundle / 'runtime' / 'python'}")
 
+    if platform_name.startswith("win"):
+        python_home = python.parent
+        print(f"Python runtime executable: {python}")
+        print(f"Python runtime home: {python_home}")
+        print(f"Python runtime Lib/encodings: {(python_home / 'Lib' / 'encodings').exists()}")
+        print(f"Python runtime python311.zip: {(python_home / 'python311.zip').exists()}")
+
     env = os.environ.copy()
     env.pop("PYTHONHOME", None)
     env.pop("PYTHONPATH", None)
@@ -112,6 +119,32 @@ def archive_bundle(platform_name: str, bundle: Path, output: Path) -> Path:
     with tarfile.open(archive, "w:gz") as tf:
         tf.add(bundle, arcname=bundle.name)
     return archive
+
+
+def validate_archive_python_stdlib(platform_name: str, archive: Path) -> None:
+    if not platform_name.startswith("win"):
+        return
+
+    with zipfile.ZipFile(archive) as zf:
+        names = set(zf.namelist())
+        prefix = f"hermes-offline-installer-{platform_name}/runtime/python/"
+        lib_encoding = prefix + "Lib/encodings/__init__.py"
+        nested_zip = prefix + "python311.zip"
+        if lib_encoding in names:
+            return
+        if nested_zip in names:
+            import io
+
+            with zf.open(nested_zip) as nested_file:
+                nested_data = nested_file.read()
+            with zipfile.ZipFile(io.BytesIO(nested_data)) as nested:
+                nested_names = set(nested.namelist())
+            if "encodings/__init__.py" in nested_names:
+                return
+        raise SystemExit(
+            f"{archive.name} does not contain Python encodings in "
+            f"{lib_encoding} or {nested_zip}"
+        )
 
 
 def main() -> None:
@@ -146,6 +179,7 @@ def main() -> None:
     write_manifest(bundle / "manifest.json", target_platform=args.platform, extra={"kind": "bundle"})
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
+    validate_archive_python_stdlib(args.platform, archive)
     print(f"created {archive}")
 
 
