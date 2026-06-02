@@ -62,9 +62,11 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量；重新打开 PowerShell/CMD 后生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
+Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量；重新打开 PowerShell/CMD 后生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
 
-如果安装时提示 `%APPDATA%\clawpanel\bin\hermes.exe` 正由另一进程使用，安装器会跳过该 exe 覆盖并继续完成；关闭正在运行的 Hermes/ClawPanel 进程后重新安装即可刷新这个兼容 exe。
+已经安装过离线包时，解压新版 zip 后再次运行 `install.cmd` 即执行升级：安装器会重建 runtime/venv 并更新 shim，但保留现有 `config.yaml` 和 `.env`。
+
+如果安装时提示旧 runtime 或 `%APPDATA%\clawpanel\bin\hermes.exe` 正由另一进程使用，请关闭正在运行的 Hermes/ClawPanel 进程后重新安装。
 
 脚本会打开一个保留输出的命令行窗口。自动化运行时如需禁止重新打开窗口：
 

@@ -16,8 +16,127 @@ $VenvDir = Join-Path $RuntimeDir "venv"
 $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
 $RuntimeTemplates = Join-Path $RuntimeDir "templates"
 $RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
+$ExistingHermesCmd = Join-Path $BinDir "hermes.cmd"
+
+function Test-ProcessMatchesPath {
+  param(
+    [AllowNull()] [string] $Value,
+    [string[]] $Paths
+  )
+
+  if (-not $Value) {
+    return $false
+  }
+
+  foreach ($Path in $Paths) {
+    if ($Path -and $Value.IndexOf($Path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Stop-ExistingHermesProcesses {
+  param(
+    [string] $InstallRoot,
+    [string] $RuntimeDir,
+    [string] $HermesHome,
+    [string[]] $ShimDirs
+  )
+
+  $MatchPaths = @($InstallRoot, $RuntimeDir, $HermesHome) + $ShimDirs | Where-Object { $_ } | Select-Object -Unique
+  $CurrentPid = $PID
+  $Processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    if ($_.ProcessId -eq $CurrentPid) {
+      return $false
+    }
+
+    $Name = $_.Name
+    $ExecutablePath = $_.ExecutablePath
+    $CommandLine = $_.CommandLine
+    $MatchesKnownPath = (
+      (Test-ProcessMatchesPath -Value $ExecutablePath -Paths $MatchPaths) -or
+      (Test-ProcessMatchesPath -Value $CommandLine -Paths $MatchPaths)
+    )
+    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and ($MatchesKnownPath -or (
+      $CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    ))) {
+      return $true
+    }
+    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and (
+      $MatchesKnownPath -or
+      ($CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+    )) {
+      return $true
+    }
+    return $false
+  }
+
+  if (-not $Processes) {
+    return
+  }
+
+  $ProcessIds = @($Processes | Select-Object -ExpandProperty ProcessId -Unique)
+  Write-Host "Stopping running Hermes processes before install/upgrade: $($ProcessIds -join ', ')"
+  foreach ($ProcessId in $ProcessIds) {
+    try {
+      Stop-Process -Id $ProcessId -ErrorAction Stop
+    } catch {
+      Write-Warning "Could not stop process $ProcessId gracefully: $($_.Exception.Message)"
+    }
+  }
+
+  Start-Sleep -Seconds 2
+  $StillRunning = @()
+  foreach ($ProcessId in $ProcessIds) {
+    try {
+      $Process = Get-Process -Id $ProcessId -ErrorAction Stop
+      $StillRunning += $Process
+    } catch {
+    }
+  }
+
+  if ($StillRunning.Count -eq 0) {
+    return
+  }
+
+  Write-Host "Forcing remaining Hermes processes to stop: $((@($StillRunning | Select-Object -ExpandProperty Id)) -join ', ')"
+  foreach ($Process in $StillRunning) {
+    try {
+      Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+    } catch {
+      throw "Could not stop running Hermes process $($Process.Id). Please close Hermes/ClawPanel and rerun install.cmd. Error: $($_.Exception.Message)"
+    }
+  }
+}
+
+function Remove-InstallPath {
+  param(
+    [string] $Path
+  )
+
+  if (-not (Test-Path $Path)) {
+    return
+  }
+
+  try {
+    Remove-Item -Recurse -Force $Path -ErrorAction Stop
+  } catch {
+    throw "Could not remove $Path. Please close Hermes/ClawPanel and rerun install.cmd. Error: $($_.Exception.Message)"
+  }
+
+  if (Test-Path $Path) {
+    throw "Could not remove $Path. Please close Hermes/ClawPanel and rerun install.cmd."
+  }
+}
 
 $ShimDirs = @($BinDir, $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
+$IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
+if ($IsUpgrade) {
+  Write-Host "Existing Hermes offline installation detected. Running upgrade."
+} else {
+  Write-Host "No existing Hermes offline installation detected. Running install."
+}
 $InstallDirs = @($RuntimeDir, $HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
 
@@ -26,7 +145,10 @@ if (-not (Test-Path $Wheelhouse)) {
   throw "Missing wheelhouse: $Wheelhouse"
 }
 
-Remove-Item -Recurse -Force $RuntimeWheelhouse, $RuntimeTemplates, $RuntimeBundle, $VenvDir -ErrorAction SilentlyContinue
+Stop-ExistingHermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ShimDirs
+foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeBundle, $VenvDir)) {
+  Remove-InstallPath -Path $Path
+}
 Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
 Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") $RuntimeTemplates
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
