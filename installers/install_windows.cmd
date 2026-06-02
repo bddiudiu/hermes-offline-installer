@@ -9,6 +9,7 @@ exit /b 0
 
 :run
 title Hermes Agent Offline Installer
+chcp 65001 >nul
 set "SCRIPT_DIR=%~dp0"
 set "INSTALL_PS1=%SCRIPT_DIR%install_windows.ps1"
 set "PAUSE_ON_EXIT=1"

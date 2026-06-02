@@ -64,6 +64,8 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 
 Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，创建 `%USERPROFILE%\.hermes-venv` 兼容入口，并自动启动 Dashboard；重新打开 PowerShell/CMD 后环境变量生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
 
+Windows 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
+
 已经安装过离线包时，解压新版 zip 后再次运行 `install.cmd` 即执行升级：安装器会重建 runtime/venv 并更新 shim，但保留现有 `config.yaml` 和 `.env`。
 
 如果安装时提示旧 runtime 或 `%APPDATA%\clawpanel\bin\hermes.exe` 正由另一进程使用，请关闭正在运行的 Hermes/ClawPanel 进程后重新安装。

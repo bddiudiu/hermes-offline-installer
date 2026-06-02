@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 
 Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BundleDir = Resolve-Path (Join-Path $ScriptDir "..")
@@ -312,6 +314,9 @@ if (-not (Test-Path $HermesExe)) {
 }
 $ShimLines = @(
   "@echo off",
+  "chcp 65001 >nul",
+  'set "PYTHONUTF8=1"',
+  'set "PYTHONIOENCODING=utf-8"',
   ('set "HERMES_HOME={0}"' -f $HermesHome),
   ('set "HERMES_PYTHON={0}"' -f $VenvPython),
   ('"{0}" %*' -f $HermesExe)
@@ -330,9 +335,13 @@ $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome
 $env:HERMES_OFFLINE_HOME = $InstallRoot
 $env:HERMES_PYTHON = $VenvPython
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
 [Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $InstallRoot, "User")
 [Environment]::SetEnvironmentVariable("HERMES_PYTHON", $VenvPython, "User")
+[Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "User")
+[Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "User")
 Ensure-HermesPythonCompatibilityPath -CompatVenvDir $CompatVenvDir -VenvDir $VenvDir
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
