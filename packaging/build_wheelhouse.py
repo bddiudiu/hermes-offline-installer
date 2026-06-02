@@ -16,6 +16,8 @@ OFFLINE_RUNTIME_REQUIREMENTS = [
     "aiohttp==3.13.3",
     # Required by `hermes dashboard`.
     "fastapi==0.133.1",
+    # Required by FastAPI routes that accept form data.
+    "python-multipart",
     "uvicorn==0.41.0",
     # Required by dashboard/API websocket endpoints and tools.browser_dialog_tool.
     "websockets",
@@ -24,6 +26,7 @@ OFFLINE_RUNTIME_REQUIREMENTS = [
 OFFLINE_REQUIRED_WHEELS = [
     "aiohttp",
     "fastapi",
+    "python_multipart",
     "uvicorn",
     "websockets",
 ]

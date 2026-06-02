@@ -293,6 +293,7 @@ if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $Venv
 $RuntimePackages = @(
   "aiohttp==3.13.3",
   "fastapi==0.133.1",
+  "python-multipart",
   "uvicorn==0.41.0",
   "websockets"
 )
@@ -300,7 +301,7 @@ $RuntimePackages = @(
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
-& $VenvPython -c "import aiohttp, fastapi, uvicorn, websockets"
+& $VenvPython -c "import aiohttp, fastapi, multipart, uvicorn, websockets"
 if ($LASTEXITCODE -ne 0) {
   throw "Gateway dependency check failed with exit code $LASTEXITCODE."
 }

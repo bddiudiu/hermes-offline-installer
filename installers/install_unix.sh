@@ -59,6 +59,7 @@ VENV_PYTHON="$VENV_DIR/bin/python"
 RUNTIME_PACKAGES=(
   "aiohttp==3.13.3"
   "fastapi==0.133.1"
+  "python-multipart"
   "uvicorn==0.41.0"
   "websockets"
 )

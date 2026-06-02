@@ -101,7 +101,7 @@ python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelh
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
-离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。
+离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`python-multipart`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。
 
 ## OSS 发布
 
