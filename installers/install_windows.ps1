@@ -13,6 +13,7 @@ $UvToolsBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "uv\tools\bin" } els
 $ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } else { $null }
 $HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
 $VenvDir = Join-Path $RuntimeDir "venv"
+$CompatVenvDir = Join-Path $env:USERPROFILE ".hermes-venv"
 $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
 $RuntimeTemplates = Join-Path $RuntimeDir "templates"
 $RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
@@ -179,6 +180,37 @@ function Start-HermesDashboard {
   }
 }
 
+function Ensure-HermesPythonCompatibilityPath {
+  param(
+    [string] $CompatVenvDir,
+    [string] $VenvDir
+  )
+
+  $CompatPython = Join-Path $CompatVenvDir "Scripts\python.exe"
+  if (Test-Path $CompatPython) {
+    Write-Host "Hermes Python compatibility path is available: $CompatPython"
+    return
+  }
+
+  if (Test-Path $CompatVenvDir) {
+    Write-Warning "Hermes Python compatibility path exists but does not contain Scripts\python.exe: $CompatVenvDir"
+    return
+  }
+
+  try {
+    New-Item -ItemType Junction -Path $CompatVenvDir -Target $VenvDir -ErrorAction Stop | Out-Null
+  } catch {
+    Write-Warning "Could not create Hermes Python compatibility junction $CompatVenvDir -> $VenvDir. Error: $($_.Exception.Message)"
+    return
+  }
+
+  if (Test-Path $CompatPython) {
+    Write-Host "Created Hermes Python compatibility path: $CompatVenvDir"
+  } else {
+    Write-Warning "Hermes Python compatibility path was created but Scripts\python.exe is still unavailable: $CompatVenvDir"
+  }
+}
+
 $ShimDirs = @($BinDir, $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
 $IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
 if ($IsUpgrade) {
@@ -300,6 +332,7 @@ $env:HERMES_PYTHON = $VenvPython
 [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
 [Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $InstallRoot, "User")
 [Environment]::SetEnvironmentVariable("HERMES_PYTHON", $VenvPython, "User")
+Ensure-HermesPythonCompatibilityPath -CompatVenvDir $CompatVenvDir -VenvDir $VenvDir
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
