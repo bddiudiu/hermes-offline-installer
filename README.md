@@ -62,7 +62,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量；重新打开 PowerShell/CMD 后生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
+Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并自动启动 Dashboard；重新打开 PowerShell/CMD 后环境变量生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
 
 已经安装过离线包时，解压新版 zip 后再次运行 `install.cmd` 即执行升级：安装器会重建 runtime/venv 并更新 shim，但保留现有 `config.yaml` 和 `.env`。
 
@@ -73,6 +73,13 @@ Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进�
 ```cmd
 set HERMES_NO_RELAUNCH=1
 set HERMES_NO_PAUSE=1
+install_windows.cmd
+```
+
+如需安装完成后不自动启动 Dashboard：
+
+```cmd
+set HERMES_NO_START_DASHBOARD=1
 install_windows.cmd
 ```
 

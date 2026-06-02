@@ -130,6 +130,55 @@ function Remove-InstallPath {
   }
 }
 
+function Test-LocalTcpPort {
+  param(
+    [int] $Port
+  )
+
+  $Client = $null
+  try {
+    $Client = New-Object System.Net.Sockets.TcpClient
+    $Async = $Client.BeginConnect("127.0.0.1", $Port, $null, $null)
+    if (-not $Async.AsyncWaitHandle.WaitOne(500, $false)) {
+      return $false
+    }
+    $Client.EndConnect($Async)
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($Client) {
+      $Client.Close()
+    }
+  }
+}
+
+function Start-HermesDashboard {
+  param(
+    [string] $HermesCmd,
+    [int] $Port
+  )
+
+  if ($env:HERMES_NO_START_DASHBOARD -eq "1") {
+    Write-Host "Skipping Dashboard startup because HERMES_NO_START_DASHBOARD=1."
+    return
+  }
+
+  if (Test-LocalTcpPort -Port $Port) {
+    Write-Host "Hermes Dashboard is already listening on http://127.0.0.1:$Port."
+    return
+  }
+
+  Write-Host "Starting Hermes Dashboard on http://127.0.0.1:$Port ..."
+  Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
+  Start-Sleep -Seconds 3
+  if (Test-LocalTcpPort -Port $Port) {
+    Write-Host "Hermes Dashboard started: http://127.0.0.1:$Port"
+  } else {
+    Write-Warning "Hermes Dashboard was launched but port $Port is not listening yet. Check the Dashboard command window for details."
+  }
+}
+
 $ShimDirs = @($BinDir, $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
 $IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
 if ($IsUpgrade) {
@@ -298,6 +347,8 @@ if (($UserPath -split ";") -notcontains $BinDir -or ($UserPath -split ";") -notc
 if ($LASTEXITCODE -ne 0) {
   throw "Hermes version check failed with exit code $LASTEXITCODE."
 }
+
+Start-HermesDashboard -HermesCmd $HermesCmd -Port 9119
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
