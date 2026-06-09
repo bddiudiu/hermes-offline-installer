@@ -173,7 +173,11 @@ function Start-HermesDashboard {
   }
 
   Write-Host "Starting Hermes Dashboard on http://127.0.0.1:$Port ..."
-  Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
+  if ($env:HERMES_START_DASHBOARD_VISIBLE -eq "1") {
+    Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
+  } else {
+    Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard") | Out-Null
+  }
   Start-Sleep -Seconds 3
   if (Test-LocalTcpPort -Port $Port) {
     Write-Host "Hermes Dashboard started: http://127.0.0.1:$Port"
@@ -321,9 +325,21 @@ $ShimLines = @(
   ('set "HERMES_PYTHON={0}"' -f $VenvPython),
   ('"{0}" %*' -f $HermesExe)
 )
+$DashboardShimLines = @(
+  "@echo off",
+  "title Hermes Agent Dashboard",
+  "chcp 65001 >nul",
+  'set "PYTHONUTF8=1"',
+  'set "PYTHONIOENCODING=utf-8"',
+  ('set "HERMES_HOME={0}"' -f $HermesHome),
+  ('set "HERMES_PYTHON={0}"' -f $VenvPython),
+  ('"{0}" dashboard %*' -f $HermesExe)
+)
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
   $ShimExe = Join-Path $ShimDir "hermes.exe"
   try {
     Copy-Item -Force $HermesExe $ShimExe
@@ -395,5 +411,7 @@ Start-HermesDashboard -HermesCmd $HermesCmd -Port 9119
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
+$DashboardCmd = Join-Path $BinDir "hermes-dashboard.cmd"
+Write-Host "dashboard: $DashboardCmd"
 Write-Host "config: $ConfigPath"
 Write-Host "Please reopen PowerShell for PATH changes to take effect."

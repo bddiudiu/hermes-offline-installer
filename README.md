@@ -85,11 +85,24 @@ set HERMES_NO_START_DASHBOARD=1
 install_windows.cmd
 ```
 
+默认情况下，安装完成后 Dashboard 会静默在后台启动。如需打开可见的 Dashboard 命令行窗口以便排查日志：
+
+```cmd
+set HERMES_START_DASHBOARD_VISIBLE=1
+install_windows.cmd
+```
+
 重新打开 PowerShell，验证：
 
 ```powershell
 hermes version
 hermes dashboard
+```
+
+也可以双击解压目录里的 `dashboard.cmd`，或重新打开 PowerShell/CMD 后运行：
+
+```cmd
+hermes-dashboard
 ```
 
 ## 构建
