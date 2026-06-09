@@ -18,6 +18,7 @@ $VenvDir = Join-Path $RuntimeDir "venv"
 $CompatVenvDir = Join-Path $env:USERPROFILE ".hermes-venv"
 $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
 $RuntimeTemplates = Join-Path $RuntimeDir "templates"
+$RuntimeCommands = Join-Path $RuntimeDir "commands"
 $RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
 $ExistingHermesCmd = Join-Path $BinDir "hermes.cmd"
 
@@ -133,59 +134,6 @@ function Remove-InstallPath {
   }
 }
 
-function Test-LocalTcpPort {
-  param(
-    [int] $Port
-  )
-
-  $Client = $null
-  try {
-    $Client = New-Object System.Net.Sockets.TcpClient
-    $Async = $Client.BeginConnect("127.0.0.1", $Port, $null, $null)
-    if (-not $Async.AsyncWaitHandle.WaitOne(500, $false)) {
-      return $false
-    }
-    $Client.EndConnect($Async)
-    return $true
-  } catch {
-    return $false
-  } finally {
-    if ($Client) {
-      $Client.Close()
-    }
-  }
-}
-
-function Start-HermesDashboard {
-  param(
-    [string] $HermesCmd,
-    [int] $Port
-  )
-
-  if ($env:HERMES_NO_START_DASHBOARD -eq "1") {
-    Write-Host "Skipping Dashboard startup because HERMES_NO_START_DASHBOARD=1."
-    return
-  }
-
-  if (Test-LocalTcpPort -Port $Port) {
-    Write-Host "Hermes Dashboard is already listening on http://127.0.0.1:$Port."
-    return
-  }
-
-  Write-Host "Starting Hermes Dashboard on http://127.0.0.1:$Port ..."
-  if ($env:HERMES_START_DASHBOARD_VISIBLE -eq "1") {
-    Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
-  } else {
-    Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard") | Out-Null
-  }
-  Start-Sleep -Seconds 3
-  if (Test-LocalTcpPort -Port $Port) {
-    Write-Host "Hermes Dashboard started: http://127.0.0.1:$Port"
-  } else {
-    Write-Warning "Hermes Dashboard was launched but port $Port is not listening yet. Check the Dashboard command window for details."
-  }
-}
-
 function Ensure-HermesPythonCompatibilityPath {
   param(
     [string] $CompatVenvDir,
@@ -233,11 +181,14 @@ if (-not (Test-Path $Wheelhouse)) {
 }
 
 Stop-ExistingHermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ShimDirs
-foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeBundle, $VenvDir)) {
+foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $VenvDir)) {
   Remove-InstallPath -Path $Path
 }
 Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
 Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") $RuntimeTemplates
+New-Item -ItemType Directory -Force -Path $RuntimeCommands | Out-Null
+Copy-Item -Force (Join-Path $ScriptDir "launch_windows.ps1") (Join-Path $RuntimeCommands "launch_windows.ps1")
+Copy-Item -Force (Join-Path $ScriptDir "shutdown_windows.ps1") (Join-Path $RuntimeCommands "shutdown_windows.ps1")
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
 
 $Candidates = @(
@@ -335,11 +286,23 @@ $DashboardShimLines = @(
   ('set "HERMES_PYTHON={0}"' -f $VenvPython),
   ('"{0}" dashboard %*' -f $HermesExe)
 )
+$LaunchShimLines = @(
+  "@echo off",
+  ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "launch_windows.ps1"))
+)
+$ShutdownShimLines = @(
+  "@echo off",
+  ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "shutdown_windows.ps1"))
+)
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-launch.cmd") -Encoding ASCII -Value $LaunchShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-launch.bat") -Encoding ASCII -Value $LaunchShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Encoding ASCII -Value $ShutdownShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
   $ShimExe = Join-Path $ShimDir "hermes.exe"
   try {
     Copy-Item -Force $HermesExe $ShimExe
@@ -407,11 +370,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "Hermes version check failed with exit code $LASTEXITCODE."
 }
 
-Start-HermesDashboard -HermesCmd $HermesCmd -Port 9119
-
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
-$DashboardCmd = Join-Path $BinDir "hermes-dashboard.cmd"
-Write-Host "dashboard: $DashboardCmd"
+$LaunchCmd = Join-Path $BinDir "hermes-launch.cmd"
+$ShutdownCmd = Join-Path $BinDir "hermes-shutdown.cmd"
+Write-Host "launch: $LaunchCmd"
+Write-Host "shutdown: $ShutdownCmd"
 Write-Host "config: $ConfigPath"
 Write-Host "Please reopen PowerShell for PATH changes to take effect."

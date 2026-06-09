@@ -172,7 +172,8 @@ def main() -> None:
         write_windows_powershell_scripts_with_bom(bundle)
         shutil.copy2(bundle / "installers" / "install_windows.cmd", bundle / "install_windows.cmd")
         shutil.copy2(bundle / "installers" / "install_windows.cmd", bundle / "install.cmd")
-        shutil.copy2(bundle / "installers" / "dashboard_windows.cmd", bundle / "dashboard.cmd")
+        shutil.copy2(bundle / "installers" / "launch_windows.cmd", bundle / "launch.cmd")
+        shutil.copy2(bundle / "installers" / "shutdown_windows.cmd", bundle / "shutdown.cmd")
 
     prepare_uv(args.platform, bundle)
     prepare_python_runtime(bundle)
