@@ -42,7 +42,7 @@ hermes dashboard
 
 ### Windows
 
-解压 zip 后，直接双击或在命令行运行根目录的安装入口。`install.cmd` 只负责安装或升级，不会启动 Hermes Agent 或 Dashboard：
+解压 zip 后，直接双击或在命令行运行根目录的安装入口。`install.cmd` 会执行安装或升级，并默认启动 Hermes Agent 和 Dashboard：
 
 ```cmd
 install.cmd
@@ -62,7 +62,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并创建 `%USERPROFILE%\.hermes-venv` 兼容入口；重新打开 PowerShell/CMD 后环境变量生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
+Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，创建 `%USERPROFILE%\.hermes-venv` 兼容入口，并自动启动 Dashboard；重新打开 PowerShell/CMD 后环境变量生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
 
 Windows 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
 
@@ -78,16 +78,23 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-安装完成后，运行启动入口来启动 Hermes Agent 和 Dashboard：
+如需安装完成后不自动启动 Dashboard：
 
 ```cmd
-launch.cmd
+set HERMES_NO_START_DASHBOARD=1
+install_windows.cmd
 ```
 
-默认情况下，`launch.cmd` 会静默在后台启动 Dashboard。如需打开可见的 Dashboard 命令行窗口以便排查日志：
+默认情况下，安装完成后 Dashboard 会静默在后台启动。如需打开可见的 Dashboard 命令行窗口以便排查日志：
 
 ```cmd
-set HERMES_LAUNCH_VISIBLE=1
+set HERMES_START_DASHBOARD_VISIBLE=1
+install_windows.cmd
+```
+
+安装后也可以使用独立启动入口再次启动 Hermes Agent 和 Dashboard：
+
+```cmd
 launch.cmd
 ```
 
