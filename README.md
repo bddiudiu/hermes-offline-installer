@@ -129,7 +129,7 @@ python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelh
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
-离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`python-multipart`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。
+离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`python-multipart`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。安装器还会把 `hermes-agent` wheel 内置的 bundled Agent Skills 同步到 `$HERMES_HOME/skills`，Dashboard 的 Agent Skills 面板会读取这个目录。
 
 ## OSS 发布
 
@@ -164,7 +164,7 @@ hermes/<hermes-agent-version>/
 - runtime：默认 `~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 调整
 - shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`
 - Hermes 配置：默认 `~/.hermes/config.yaml` 与 `~/.hermes/.env`，Windows 默认为 `%USERPROFILE%\.hermes\config.yaml` 与 `%USERPROFILE%\.hermes\.env`，可通过 `HERMES_HOME` 调整
-- 后续用户插件、skills、日志和状态文件会跟随 Hermes 使用的 `HERMES_HOME`
+- 后续用户插件、skills、日志和状态文件会跟随 Hermes 使用的 `HERMES_HOME`；内置 Agent Skills 会在安装或升级时补齐到 `$HERMES_HOME/skills`，用户已修改或删除的 skills 会按 Hermes bundled manifest 规则保留
 - Hermes Python：Unix shim 会自动设置 `HERMES_PYTHON`；Windows 安装器会把 `HERMES_PYTHON` 写入用户环境变量
 
 如果 Windows 已安装后查看可选依赖时提示 Hermes Python 解释器未找到，可先运行：

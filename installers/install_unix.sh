@@ -15,6 +15,22 @@ RUNTIME_BUNDLE="$RUNTIME_DIR/bundle-runtime"
 
 mkdir -p "$RUNTIME_DIR" "$BIN_DIR" "$HERMES_HOME"
 
+sync_bundled_skills() {
+  mkdir -p "$HERMES_HOME/skills"
+  echo "Syncing bundled Agent Skills to $HERMES_HOME/skills ..."
+  HERMES_HOME="$HERMES_HOME" "$VENV_PYTHON" -m tools.skills_sync
+
+  if [ -f "$HERMES_HOME/.no-bundled-skills" ]; then
+    echo "Bundled Agent Skills sync skipped because .no-bundled-skills is present."
+    return
+  fi
+
+  if ! find "$HERMES_HOME/skills" -name SKILL.md -type f -print -quit | grep -q .; then
+    echo "Bundled Agent Skills were not installed into $HERMES_HOME/skills" >&2
+    exit 1
+  fi
+}
+
 if [ ! -d "$BUNDLE_DIR/wheelhouse" ]; then
   echo "缺少 wheelhouse：$BUNDLE_DIR/wheelhouse" >&2
   exit 1
@@ -90,9 +106,11 @@ if [ ! -f "$HERMES_HOME/.env" ]; then
   cp "$RUNTIME_TEMPLATES/env.template" "$HERMES_HOME/.env"
 fi
 
+sync_bundled_skills
 "$BIN_DIR/hermes" version
 
 echo "Hermes Agent 已安装。"
 echo "shim: $BIN_DIR/hermes"
 echo "config: $HERMES_HOME/config.yaml"
+echo "skills: $HERMES_HOME/skills"
 echo "如果当前终端找不到 hermes，请把 $BIN_DIR 加入 PATH 或重新打开终端。"

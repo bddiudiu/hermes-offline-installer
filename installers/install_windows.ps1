@@ -218,6 +218,43 @@ function Ensure-HermesPythonCompatibilityPath {
   }
 }
 
+function Sync-BundledSkills {
+  param(
+    [string] $VenvPython,
+    [string] $HermesHome
+  )
+
+  $SkillsDir = Join-Path $HermesHome "skills"
+  New-Item -ItemType Directory -Force -Path $SkillsDir | Out-Null
+  Write-Host "Syncing bundled Agent Skills to $SkillsDir ..."
+
+  $PreviousHermesHome = $env:HERMES_HOME
+  $env:HERMES_HOME = $HermesHome
+  try {
+    & $VenvPython -m tools.skills_sync
+    if ($LASTEXITCODE -ne 0) {
+      throw "Bundled Agent Skills sync failed with exit code $LASTEXITCODE."
+    }
+  } finally {
+    if ($null -eq $PreviousHermesHome) {
+      Remove-Item Env:HERMES_HOME -ErrorAction SilentlyContinue
+    } else {
+      $env:HERMES_HOME = $PreviousHermesHome
+    }
+  }
+
+  $OptOutMarker = Join-Path $HermesHome ".no-bundled-skills"
+  if (Test-Path $OptOutMarker) {
+    Write-Host "Bundled Agent Skills sync skipped because .no-bundled-skills is present."
+    return
+  }
+
+  $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File -ErrorAction SilentlyContinue)
+  if ($SkillFiles.Count -eq 0) {
+    throw "Bundled Agent Skills were not installed into $SkillsDir."
+  }
+}
+
 $ShimDirs = @($BinDir, $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
 $IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
 if ($IsUpgrade) {
@@ -403,6 +440,8 @@ if ($OpenAiBaseUrlLine -and -not $CustomBaseUrlLine) {
   Write-Host "Added CUSTOM_BASE_URL from existing OPENAI_BASE_URL for custom endpoint detection."
 }
 
+Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome
+
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($UserPath -split ";") -notcontains $BinDir -or ($UserPath -split ";") -notcontains $LocalBinDir) {
   $PathParts = @()
@@ -432,4 +471,5 @@ $ShutdownCmd = Join-Path $BinDir "hermes-shutdown.cmd"
 Write-Host "launch: $LaunchCmd"
 Write-Host "shutdown: $ShutdownCmd"
 Write-Host "config: $ConfigPath"
+Write-Host "skills: $(Join-Path $HermesHome 'skills')"
 Write-Host "Please reopen PowerShell for PATH changes to take effect."
