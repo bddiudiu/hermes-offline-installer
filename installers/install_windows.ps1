@@ -134,6 +134,70 @@ function Remove-InstallPath {
   }
 }
 
+function Clear-PythonRuntimeEnvironment {
+  Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+}
+
+function Test-BundledPythonRuntime {
+  param(
+    [string] $PythonBin,
+    [AllowNull()] [string] $PythonHome
+  )
+
+  Clear-PythonRuntimeEnvironment
+  if ($PythonHome) {
+    $env:PYTHONHOME = $PythonHome
+  }
+
+  & $PythonBin -c "import encodings, venv"
+  $Succeeded = ($LASTEXITCODE -eq 0)
+  Clear-PythonRuntimeEnvironment
+  return $Succeeded
+}
+
+function New-HermesVenv {
+  param(
+    [string] $PythonBin,
+    [string] $VenvDir,
+    [AllowNull()] [string] $FallbackPythonHome
+  )
+
+  Clear-PythonRuntimeEnvironment
+  Remove-InstallPath -Path $VenvDir
+  & $PythonBin -m venv $VenvDir
+  if ($LASTEXITCODE -eq 0) {
+    return
+  }
+
+  $FirstExitCode = $LASTEXITCODE
+  Write-Warning "Python venv creation failed with exit code $FirstExitCode using a clean Python environment. Retrying once after recreating $VenvDir."
+  Clear-PythonRuntimeEnvironment
+  Remove-InstallPath -Path $VenvDir
+  Start-Sleep -Seconds 1
+  & $PythonBin -m venv $VenvDir
+  if ($LASTEXITCODE -eq 0) {
+    return
+  }
+
+  $SecondExitCode = $LASTEXITCODE
+  if ($FallbackPythonHome) {
+    Write-Warning "Python venv creation failed again with exit code $SecondExitCode. Retrying with PYTHONHOME=$FallbackPythonHome for this process only."
+    Clear-PythonRuntimeEnvironment
+    $env:PYTHONHOME = $FallbackPythonHome
+    Remove-InstallPath -Path $VenvDir
+    & $PythonBin -m venv $VenvDir
+    $ThirdExitCode = $LASTEXITCODE
+    Clear-PythonRuntimeEnvironment
+    if ($ThirdExitCode -eq 0) {
+      return
+    }
+    throw "Python venv creation failed. clean exit codes: $FirstExitCode, $SecondExitCode; PYTHONHOME retry exit code: $ThirdExitCode; python: $PythonBin; target: $VenvDir"
+  }
+
+  throw "Python venv creation failed. clean exit codes: $FirstExitCode, $SecondExitCode; python: $PythonBin; target: $VenvDir"
+}
+
 function Test-LocalTcpPort {
   param(
     [int] $Port
@@ -311,28 +375,20 @@ if (-not $PythonBin) {
 }
 
 $BundledPythonHome = Split-Path -Parent $PythonBin
-$env:PYTHONHOME = $BundledPythonHome
-& $PythonBin -c "import encodings"
-if ($LASTEXITCODE -ne 0) {
-  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+$PythonRuntimeNeedsPythonHome = $false
+if (-not (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $null)) {
   $EncodingsDir = Get-ChildItem -Path $BundledPythonHome -Recurse -Directory -Filter "encodings" -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($EncodingsDir) {
-    $env:PYTHONPATH = $EncodingsDir.Parent.FullName
-    & $PythonBin -c "import encodings"
-  }
-  if ($LASTEXITCODE -ne 0) {
+  if (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $BundledPythonHome) {
+    $PythonRuntimeNeedsPythonHome = $true
+  } else {
     $PythonZip = Join-Path $BundledPythonHome "python311.zip"
     $LibEncodings = Join-Path $BundledPythonHome "Lib\encodings"
     throw "Bundled Python failed to import encodings. PYTHONHOME=$BundledPythonHome; python311.zip exists=$(Test-Path $PythonZip); Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
   }
 }
 
-& $PythonBin -m venv $VenvDir
-if ($LASTEXITCODE -ne 0) {
-  throw "Python venv creation failed with exit code $LASTEXITCODE."
-}
-Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
-Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+$FallbackPythonHome = if ($PythonRuntimeNeedsPythonHome) { $BundledPythonHome } else { $null }
+New-HermesVenv -PythonBin $PythonBin -VenvDir $VenvDir -FallbackPythonHome $FallbackPythonHome
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
