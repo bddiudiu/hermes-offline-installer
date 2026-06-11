@@ -1,60 +1,45 @@
 # Hermes Offline Installer
 
-Hermes Offline Installer 是一个独立的一键离线安装项目，用于把 Hermes Agent、Python runtime、uv 和 Python 依赖预打包成平台安装包。
+Hermes Offline Installer packages Hermes Agent with a portable Python runtime, `uv`, offline Python wheels, dashboard assets, skills, plugins, locales, and installer scripts, so Hermes can be installed without requiring end users to install Python, `uv`, or Git.
 
-目标：最终用户不需要自行安装 Python、uv、git，也不需要在安装阶段访问 GitHub 或 PyPI。
+项目目标是在 Windows、macOS 和 Linux 上生成可分发的一键离线安装包。安装阶段只使用包内资源，不依赖 GitHub 或 PyPI 网络访问。
 
-## 产物
+## Features
 
-GitHub Actions 当前优先生成 Windows 安装包：
+- Bundles Hermes Agent, portable Python runtime, `uv`, Python dependencies, and runtime resources.
+- Installs or upgrades Hermes without overwriting existing `config.yaml` and `.env`.
+- Provides Windows launch/shutdown helpers and PATH commands.
+- Supports configurable install locations through `HERMES_HOME` and `HERMES_OFFLINE_HOME`.
+- Exports Hermes runtime resources, including bundled Agent Skills, optional skills catalog, optional MCP catalog, locales, bundled plugins, and Dashboard `web_dist`.
+
+## Artifacts
+
+Release artifacts follow this naming convention:
 
 - `hermes-offline-installer-win-x64.zip`
+- `hermes-offline-installer-linux-x64.tar.gz`
+- `hermes-offline-installer-mac-x64.tar.gz`
+- `hermes-offline-installer-mac-arm64.tar.gz`
 
-## 使用方式
+The current GitHub Actions release workflow builds `win-x64` first. The packaging scripts already accept `linux-x64`, `mac-x64`, and `mac-arm64` platform targets for local testing and future release matrix expansion.
 
-### macOS / Linux
-
-```bash
-tar -xzf hermes-offline-installer-<platform>.tar.gz
-cd hermes-offline-installer-<platform>
-./installers/install_unix.sh
-```
-
-如需自定义安装位置，可在安装时传入环境变量。下面的命令可直接复制运行，其中：
-
-- `HERMES_HOME` 控制 Hermes 配置、插件、skills、日志和状态文件位置
-- `HERMES_OFFLINE_HOME` 控制离线 runtime、venv 和 shim 位置
-
-```bash
-HERMES_HOME=/data/hermes \
-HERMES_OFFLINE_HOME=/data/hermes-runtime \
-./installers/install_unix.sh
-```
-
-也可以把 `/data/hermes` 和 `/data/hermes-runtime` 替换成自己的目录。
-
-安装后重新打开终端，验证：
-
-```bash
-hermes version
-hermes dashboard
-```
+## Installation
 
 ### Windows
 
-解压 zip 后，直接双击或在命令行运行根目录的安装入口。`install.cmd` 会执行安装或升级，并默认启动 Hermes Agent 和 Dashboard：
+Download and unzip `hermes-offline-installer-win-x64.zip`, then run the installer from the extracted directory:
 
 ```cmd
 install.cmd
 ```
 
-也可以使用兼容入口：
+The compatibility entry remains available:
 
 ```cmd
 install_windows.cmd
 ```
 
-如需自定义安装位置，可在 PowerShell 中传入环境变量后运行安装脚本：
+To customize install locations, set environment variables in PowerShell before running the installer:
 
 ```powershell
 $env:HERMES_HOME="D:\Hermes\home"
@@ -62,15 +47,15 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会在安装或升级前尝试停止正在运行的 Hermes 进程，然后刷新离线 runtime。安装完成后会把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，创建 `%USERPROFILE%\.hermes-venv` 兼容入口，并自动启动 Dashboard；重新打开 PowerShell/CMD 后环境变量生效。`HERMES_PYTHON` 指向离线 runtime 创建的 Hermes Python 解释器，用于后续查看或安装可选依赖。
+The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, creates the `%USERPROFILE%\.hermes-venv` compatibility entry, and starts Dashboard by default. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
 
-Windows 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
+The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Hermes shim switches to the UTF-8 code page. This avoids encoding issues when agent tools write files or parse terminal output on Chinese Windows environments.
 
-已经安装过离线包时，解压新版 zip 后再次运行 `install.cmd` 即执行升级：安装器会重建 runtime/venv 并更新 shim，但保留现有 `config.yaml` 和 `.env`。
+To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, and preserves existing `config.yaml` and `.env`.
 
-如果安装时提示旧 runtime 或 `%APPDATA%\clawpanel\bin\hermes.exe` 正由另一进程使用，请关闭正在运行的 Hermes/ClawPanel 进程后重新安装。
+If installation reports that an old runtime or `%APPDATA%\clawpanel\bin\hermes.exe` is in use, close running Hermes or ClawPanel processes and rerun the installer.
 
-脚本会打开一个保留输出的命令行窗口。自动化运行时如需禁止重新打开窗口：
+For automation, disable relaunch and pause behavior:
 
 ```cmd
 set HERMES_NO_RELAUNCH=1
@@ -78,76 +63,118 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-如需安装完成后不自动启动 Dashboard：
+To skip automatic Dashboard startup:
 
 ```cmd
 set HERMES_NO_START_DASHBOARD=1
 install_windows.cmd
 ```
 
-默认情况下，安装完成后 Dashboard 会静默在后台启动。如需打开可见的 Dashboard 命令行窗口以便排查日志：
+To start Dashboard in a visible command window for troubleshooting:
 
 ```cmd
 set HERMES_START_DASHBOARD_VISIBLE=1
 install_windows.cmd
 ```
 
-安装后也可以使用独立启动入口再次启动 Hermes Agent 和 Dashboard：
+After installation, use the bundled helpers:
 
 ```cmd
 launch.cmd
-```
-
-如需停止 Hermes Agent 和 Dashboard：
-
-```cmd
 shutdown.cmd
 ```
 
-重新打开 PowerShell/CMD 后，也可以直接运行安装器写入 PATH 的命令：
+After reopening PowerShell or CMD, the PATH commands are also available:
 
 ```cmd
 hermes-launch
 hermes-shutdown
 ```
 
-重新打开 PowerShell，验证：
+Verify the installation:
 
 ```powershell
 hermes version
 hermes dashboard
 ```
 
-## 构建
+### macOS / Linux
 
-本项目推荐通过 GitHub Actions 构建平台包。CI 会用 `uv python install 3.11` 准备对应 runner 平台的 portable Python runtime，并打进 bundle。
+Extract the platform archive and run the Unix installer:
 
-本地调试示例：
+```bash
+tar -xzf hermes-offline-installer-<platform>.tar.gz
+cd hermes-offline-installer-<platform>
+./installers/install_unix.sh
+```
+
+To customize install locations:
+
+```bash
+HERMES_HOME=/data/hermes \
+HERMES_OFFLINE_HOME=/data/hermes-runtime \
+./installers/install_unix.sh
+```
+
+`HERMES_HOME` controls Hermes configuration, plugins, skills, logs, and state. `HERMES_OFFLINE_HOME` controls the offline runtime, venv, and shim location.
+
+Reopen the terminal and verify:
+
+```bash
+hermes version
+hermes dashboard
+```
+
+## Build
+
+The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.11`, downloads wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle.
+
+Local build example:
 
 ```bash
 python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelhouse
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
-离线 wheelhouse 默认包含 `hermes dashboard` 所需的 `fastapi`、`python-multipart`、`uvicorn`、`websockets` 等依赖，安装后无需额外联网安装 dashboard 依赖。安装器还会把 `hermes-agent` wheel 内置的 bundled Agent Skills 同步到 `$HERMES_HOME/skills`，Dashboard 的 Agent Skills 面板会读取这个目录。
+Supported platform values:
 
-## OSS 发布
+```text
+win-x64
+linux-x64
+mac-x64
+mac-arm64
+```
 
-GitHub Actions 会在创建 GitHub Release 后上传同一批产物到 Aliyun OSS，并生成：
+`packaging/build_wheelhouse.py` uses `HERMES_SOURCE` from `packaging/manifest.py` by default. For GitHub Actions manual runs, the `hermes_source` input can override the Hermes package spec.
+
+The offline wheelhouse includes dependencies needed by `hermes dashboard`, including `fastapi`, `python-multipart`, `uvicorn`, and `websockets`. The builder also exports runtime resources from Hermes source:
+
+- bundled Agent Skills
+- optional skills catalog
+- optional MCP catalog
+- locales
+- bundled plugins
+- Dashboard `web_dist`
+
+Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources` and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
+
+## Release and OSS
+
+GitHub Actions creates a GitHub Release for tagged builds and can upload the same artifacts to Aliyun OSS. The OSS workflow generates:
 
 ```text
 hermes/latest.json
 ```
 
-默认前缀为 `hermes`，版本产物会上传到：
+By default, versioned artifacts are uploaded under:
 
 ```text
-hermes/<hermes-agent-version>/
+hermes/<hermes-agent-version>-<github-run-number>/
 ```
 
-`latest.json` 会采用和 `openclaw-standalone` 相同的轻量结构，`editions.en.base_url` 指向当前 Windows zip 下载地址。
+`latest.json` uses a lightweight edition structure, and `editions.en.base_url` points to the latest Windows zip URL.
 
-需要配置的 GitHub Secrets：
+Required GitHub Secrets:
 
 - `ALIYUN_OSS_BUCKET`
 - `ALIYUN_OSS_ENDPOINT`
@@ -155,19 +182,21 @@ hermes/<hermes-agent-version>/
 - `ALIYUN_OSS_ACCESS_KEY_SECRET`
 - `ALIYUN_OSS_PUBLIC_BASE_URL`
 
-可选 GitHub Variable：
+Optional GitHub Variable:
 
 - `ALIYUN_OSS_PREFIX`
 
-## 安装位置
+## Install Layout
 
-- runtime：默认 `~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 调整
-- shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`
-- Hermes 配置：默认 `~/.hermes/config.yaml` 与 `~/.hermes/.env`，Windows 默认为 `%USERPROFILE%\.hermes\config.yaml` 与 `%USERPROFILE%\.hermes\.env`，可通过 `HERMES_HOME` 调整
-- 后续用户插件、skills、日志和状态文件会跟随 Hermes 使用的 `HERMES_HOME`；内置 Agent Skills 会在安装或升级时补齐到 `$HERMES_HOME/skills`，用户已修改或删除的 skills 会按 Hermes bundled manifest 规则保留
-- Hermes Python：Unix shim 会自动设置 `HERMES_PYTHON`；Windows 安装器会把 `HERMES_PYTHON` 写入用户环境变量
+- Runtime: `~/.hermes-offline/runtime` or `%USERPROFILE%\.hermes-offline\runtime`; override with `HERMES_OFFLINE_HOME`.
+- Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, and `web_dist`.
+- Shim: `~/.local/bin/hermes` or `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`.
+- Hermes config: `~/.hermes/config.yaml` and `~/.hermes/.env`; on Windows, `%USERPROFILE%\.hermes\config.yaml` and `%USERPROFILE%\.hermes\.env`; override with `HERMES_HOME`.
+- User plugins, skills, logs, and state follow `HERMES_HOME`.
+- Bundled Agent Skills are restored from runtime resources during install or upgrade. User-modified or deleted skills are preserved according to the Hermes bundled manifest rules.
+- Hermes Python: Unix shims set `HERMES_PYTHON`; the Windows installer writes `HERMES_PYTHON` to the user environment.
 
-如果 Windows 已安装后查看可选依赖时提示 Hermes Python 解释器未找到，可先运行：
+If Windows reports that the Hermes Python interpreter cannot be found when checking optional dependencies, repair the user environment:
 
 ```powershell
 $HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
@@ -175,18 +204,18 @@ $HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } 
 [Environment]::SetEnvironmentVariable("HERMES_PYTHON", (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe"), "User")
 ```
 
-然后重新打开 PowerShell/CMD 再试。
+Then reopen PowerShell or CMD.
 
-## 配置模型
+## Configuration
 
-安装器只创建最小配置和环境变量模板，不写入用户 API Key。安装后请编辑：
+The installer creates only minimal config and environment templates. It does not write user API keys. After installation, edit:
 
 ```text
 $HERMES_HOME/.env
 ```
 
-## 说明
+## Notes
 
-- 安装阶段只使用包内资源。
-- 不复用 ClawPanel 安装流程。
-- 不要求用户手动安装 Python、uv、git。
+- Installation uses only bundled resources.
+- End users do not need to install Python, `uv`, or Git manually.
+- This project maintains its own installer flow and does not reuse the ClawPanel installer.

@@ -7,13 +7,16 @@ import subprocess
 import sys
 import shutil
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
 
+DEFAULT_HERMES_EXTRAS = "all"
+
 OFFLINE_RUNTIME_REQUIREMENTS = [
     # Required by the api_server platform enabled in templates/config.yaml.
-    "aiohttp==3.13.3",
+    "aiohttp==3.13.4",
     # Required by `hermes dashboard`.
     "fastapi==0.133.1",
     # Required by FastAPI routes that accept form data.
@@ -30,6 +33,30 @@ OFFLINE_REQUIRED_WHEELS = [
     "uvicorn",
     "websockets",
 ]
+
+HERMES_RESOURCE_DIRS = [
+    "skills",
+    "optional-skills",
+    "optional-mcps",
+    "locales",
+    "plugins",
+]
+
+HERMES_RESOURCE_SENTINELS = [
+    "skills/apple/imessage/SKILL.md",
+    "skills/autonomous-ai-agents/codex/SKILL.md",
+    "skills/software-development/plan/SKILL.md",
+    "optional-skills/productivity/memento-flashcards/SKILL.md",
+    "optional-mcps/linear/manifest.yaml",
+    "locales/en.yaml",
+    "plugins/disk-cleanup/plugin.yaml",
+]
+
+
+@dataclass(frozen=True)
+class HermesSource:
+    spec: str
+    source_dir: Path | None
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -48,14 +75,16 @@ def parse_git_source(source: str) -> tuple[str, str | None] | None:
     return git_url, None
 
 
-def prepare_hermes_source(hermes_spec: str, work_dir: Path) -> str:
+def prepare_hermes_source(hermes_spec: str, work_dir: Path) -> HermesSource:
     if " @ " not in hermes_spec:
-        return hermes_spec
+        return HermesSource(spec=hermes_spec, source_dir=None)
 
     name, source = hermes_spec.split(" @ ", 1)
     parsed = parse_git_source(source)
     if parsed is None:
-        return hermes_spec
+        if source.startswith("file://"):
+            return HermesSource(spec=hermes_spec, source_dir=Path(source.removeprefix("file://")))
+        return HermesSource(spec=hermes_spec, source_dir=None)
 
     url, ref = parsed
     source_dir = work_dir / "hermes-agent-src"
@@ -87,7 +116,64 @@ def prepare_hermes_source(hermes_spec: str, work_dir: Path) -> str:
     if not dist_index.exists():
         raise SystemExit(f"Dashboard frontend build did not create {dist_index}")
 
-    return f"{name} @ {source_dir.as_uri()}"
+    return HermesSource(spec=f"{name} @ {source_dir.as_uri()}", source_dir=source_dir)
+
+
+def export_hermes_resources(source_dir: Path | None, output: Path) -> None:
+    resources_dir = output / "hermes-resources"
+    if resources_dir.exists():
+        shutil.rmtree(resources_dir)
+    resources_dir.mkdir(parents=True)
+
+    if source_dir is None:
+        raise SystemExit(
+            "Cannot export Hermes runtime resources because HERMES_SOURCE did not resolve "
+            "to a local source checkout. Use the default git source or a file:// source."
+        )
+
+    for name in HERMES_RESOURCE_DIRS:
+        src = source_dir / name
+        if not src.is_dir():
+            raise SystemExit(f"Hermes source is missing required resource directory: {src}")
+        shutil.copytree(src, resources_dir / name)
+
+    web_dist = source_dir / "hermes_cli" / "web_dist"
+    if not (web_dist / "index.html").is_file():
+        raise SystemExit(f"Hermes dashboard web_dist is missing: {web_dist}")
+    shutil.copytree(web_dist, resources_dir / "web_dist")
+
+    tui_dist = source_dir / "hermes_cli" / "tui_dist"
+    if tui_dist.is_dir():
+        shutil.copytree(tui_dist, resources_dir / "tui_dist")
+
+    validate_hermes_resources(resources_dir)
+
+
+def validate_hermes_resources(resources_dir: Path) -> None:
+    missing = [rel for rel in HERMES_RESOURCE_SENTINELS if not (resources_dir / rel).is_file()]
+    if missing:
+        raise SystemExit(
+            "Hermes resources export is incomplete. Missing: " + ", ".join(sorted(missing))
+        )
+
+    skill_count = sum(1 for _ in (resources_dir / "skills").rglob("SKILL.md"))
+    optional_skill_count = sum(1 for _ in (resources_dir / "optional-skills").rglob("SKILL.md"))
+    optional_mcp_count = sum(1 for _ in (resources_dir / "optional-mcps").rglob("manifest.yaml"))
+    plugin_count = sum(1 for _ in (resources_dir / "plugins").rglob("plugin.yaml"))
+    locale_count = len(list((resources_dir / "locales").glob("*.yaml")))
+    if skill_count < 20 or optional_skill_count < 1 or optional_mcp_count < 1 or plugin_count < 1 or locale_count < 1:
+        raise SystemExit(
+            "Hermes resources export has suspicious counts: "
+            f"skills={skill_count}, optional_skills={optional_skill_count}, "
+            f"optional_mcps={optional_mcp_count}, plugins={plugin_count}, locales={locale_count}"
+        )
+
+    print(
+        "Hermes resources exported: "
+        f"skills={skill_count}, optional_skills={optional_skill_count}, "
+        f"optional_mcps={optional_mcp_count}, plugins={plugin_count}, locales={locale_count}",
+        flush=True,
+    )
 
 
 def remove_source_archives(output: Path, distribution: str) -> None:
@@ -154,7 +240,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线 wheelhouse")
     parser.add_argument("--platform", required=True, help="目标平台，例如 mac-arm64、linux-x64、win-x64")
     parser.add_argument("--output", required=True, type=Path, help="wheelhouse 输出目录")
-    parser.add_argument("--extras", default="", help="Hermes extras，例如 web,telegram")
+    parser.add_argument("--extras", default=DEFAULT_HERMES_EXTRAS, help="Hermes extras，例如 all,web,telegram；默认 all")
     args = parser.parse_args()
 
     output = args.output.resolve()
@@ -172,7 +258,8 @@ def main() -> None:
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-    wheel_hermes_spec = prepare_hermes_source(hermes_spec, work_dir)
+    hermes_source = prepare_hermes_source(hermes_spec, work_dir)
+    export_hermes_resources(hermes_source.source_dir, output)
 
     requirements = output / "requirements.txt"
     requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
@@ -203,7 +290,7 @@ def main() -> None:
         "--wheel-dir",
         str(output),
         "--no-deps",
-        wheel_hermes_spec,
+        hermes_source.spec,
     ], env=env)
     remove_source_archives(output, "hermes-agent")
     validate_required_wheels(output, OFFLINE_REQUIRED_WHEELS)

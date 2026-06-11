@@ -22,6 +22,16 @@ UV_TARGETS = {
     "win-x64": "x86_64-pc-windows-msvc",
 }
 
+HERMES_RESOURCE_SENTINELS = [
+    "skills/apple/imessage/SKILL.md",
+    "skills/autonomous-ai-agents/codex/SKILL.md",
+    "optional-skills/productivity/memento-flashcards/SKILL.md",
+    "optional-mcps/linear/manifest.yaml",
+    "locales/en.yaml",
+    "plugins/disk-cleanup/plugin.yaml",
+    "web_dist/index.html",
+]
+
 
 
 def run(cmd: list[str]) -> None:
@@ -106,6 +116,28 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
     )
 
 
+def validate_hermes_resources(resources: Path) -> None:
+    if not resources.is_dir():
+        raise SystemExit(f"缺少 Hermes runtime resources: {resources}")
+    missing = [rel for rel in HERMES_RESOURCE_SENTINELS if not (resources / rel).is_file()]
+    if missing:
+        raise SystemExit(
+            "Hermes runtime resources are incomplete. Missing: " + ", ".join(sorted(missing))
+        )
+
+    skill_count = sum(1 for _ in (resources / "skills").rglob("SKILL.md"))
+    optional_skill_count = sum(1 for _ in (resources / "optional-skills").rglob("SKILL.md"))
+    optional_mcp_count = sum(1 for _ in (resources / "optional-mcps").rglob("manifest.yaml"))
+    plugin_count = sum(1 for _ in (resources / "plugins").rglob("plugin.yaml"))
+    locale_count = len(list((resources / "locales").glob("*.yaml")))
+    print(
+        "Hermes runtime resources: "
+        f"skills={skill_count}, optional_skills={optional_skill_count}, "
+        f"optional_mcps={optional_mcp_count}, plugins={plugin_count}, locales={locale_count}",
+        flush=True,
+    )
+
+
 def archive_bundle(platform_name: str, bundle: Path, output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     if platform_name.startswith("win"):
@@ -147,6 +179,23 @@ def validate_archive_python_stdlib(platform_name: str, archive: Path) -> None:
         )
 
 
+def validate_archive_hermes_resources(platform_name: str, archive: Path) -> None:
+    prefix = f"hermes-offline-installer-{platform_name}/hermes-resources/"
+    expected = {prefix + rel for rel in HERMES_RESOURCE_SENTINELS}
+    if platform_name.startswith("win"):
+        with zipfile.ZipFile(archive) as zf:
+            names = set(zf.namelist())
+    else:
+        with tarfile.open(archive, "r:gz") as tf:
+            names = set(tf.getnames())
+    missing = sorted(expected - names)
+    if missing:
+        raise SystemExit(
+            f"{archive.name} does not contain required Hermes resources: "
+            + ", ".join(path.removeprefix(prefix) for path in missing)
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线安装 bundle")
     parser.add_argument("--platform", required=True, choices=sorted(UV_TARGETS))
@@ -161,6 +210,9 @@ def main() -> None:
     bundle.mkdir(parents=True)
 
     copytree(args.wheelhouse.resolve(), bundle / "wheelhouse")
+    resources_in_wheelhouse = bundle / "wheelhouse" / "hermes-resources"
+    validate_hermes_resources(resources_in_wheelhouse)
+    shutil.move(str(resources_in_wheelhouse), str(bundle / "hermes-resources"))
     copytree(ROOT / "installers", bundle / "installers")
     copytree(ROOT / "templates", bundle / "templates")
     copytree(ROOT / "scripts", bundle / "scripts")
@@ -182,6 +234,7 @@ def main() -> None:
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)
+    validate_archive_hermes_resources(args.platform, archive)
     print(f"created {archive}")
 
 

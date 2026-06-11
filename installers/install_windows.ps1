@@ -20,6 +20,7 @@ $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
 $RuntimeTemplates = Join-Path $RuntimeDir "templates"
 $RuntimeCommands = Join-Path $RuntimeDir "commands"
 $RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
+$RuntimeResources = Join-Path $RuntimeDir "hermes-resources"
 $ExistingHermesCmd = Join-Path $BinDir "hermes.cmd"
 
 function Test-ProcessMatchesPath {
@@ -285,7 +286,8 @@ function Ensure-HermesPythonCompatibilityPath {
 function Sync-BundledSkills {
   param(
     [string] $VenvPython,
-    [string] $HermesHome
+    [string] $HermesHome,
+    [string] $ResourcesDir
   )
 
   $SkillsDir = Join-Path $HermesHome "skills"
@@ -293,7 +295,19 @@ function Sync-BundledSkills {
   Write-Host "Syncing bundled Agent Skills to $SkillsDir ..."
 
   $PreviousHermesHome = $env:HERMES_HOME
+  $PreviousBundledSkills = $env:HERMES_BUNDLED_SKILLS
+  $PreviousOptionalSkills = $env:HERMES_OPTIONAL_SKILLS
+  $PreviousOptionalMcps = $env:HERMES_OPTIONAL_MCPS
+  $PreviousBundledLocales = $env:HERMES_BUNDLED_LOCALES
+  $PreviousBundledPlugins = $env:HERMES_BUNDLED_PLUGINS
+  $PreviousWebDist = $env:HERMES_WEB_DIST
   $env:HERMES_HOME = $HermesHome
+  $env:HERMES_BUNDLED_SKILLS = Join-Path $ResourcesDir "skills"
+  $env:HERMES_OPTIONAL_SKILLS = Join-Path $ResourcesDir "optional-skills"
+  $env:HERMES_OPTIONAL_MCPS = Join-Path $ResourcesDir "optional-mcps"
+  $env:HERMES_BUNDLED_LOCALES = Join-Path $ResourcesDir "locales"
+  $env:HERMES_BUNDLED_PLUGINS = Join-Path $ResourcesDir "plugins"
+  $env:HERMES_WEB_DIST = Join-Path $ResourcesDir "web_dist"
   try {
     & $VenvPython -m tools.skills_sync
     if ($LASTEXITCODE -ne 0) {
@@ -304,6 +318,20 @@ function Sync-BundledSkills {
       Remove-Item Env:HERMES_HOME -ErrorAction SilentlyContinue
     } else {
       $env:HERMES_HOME = $PreviousHermesHome
+    }
+    foreach ($EnvRestore in @(
+      @("HERMES_BUNDLED_SKILLS", $PreviousBundledSkills),
+      @("HERMES_OPTIONAL_SKILLS", $PreviousOptionalSkills),
+      @("HERMES_OPTIONAL_MCPS", $PreviousOptionalMcps),
+      @("HERMES_BUNDLED_LOCALES", $PreviousBundledLocales),
+      @("HERMES_BUNDLED_PLUGINS", $PreviousBundledPlugins),
+      @("HERMES_WEB_DIST", $PreviousWebDist)
+    )) {
+      if ($null -eq $EnvRestore[1]) {
+        Remove-Item "Env:$($EnvRestore[0])" -ErrorAction SilentlyContinue
+      } else {
+        Set-Item -Path "Env:$($EnvRestore[0])" -Value $EnvRestore[1]
+      }
     }
   }
 
@@ -316,6 +344,14 @@ function Sync-BundledSkills {
   $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File -ErrorAction SilentlyContinue)
   if ($SkillFiles.Count -eq 0) {
     throw "Bundled Agent Skills were not installed into $SkillsDir."
+  }
+  foreach ($RequiredSkill in @(
+    (Join-Path $SkillsDir "apple\imessage\SKILL.md"),
+    (Join-Path $SkillsDir "autonomous-ai-agents\codex\SKILL.md")
+  )) {
+    if (-not (Test-Path $RequiredSkill)) {
+      throw "Bundled Agent Skill is missing after sync: $RequiredSkill"
+    }
   }
 }
 
@@ -333,9 +369,13 @@ $Wheelhouse = Join-Path $BundleDir "wheelhouse"
 if (-not (Test-Path $Wheelhouse)) {
   throw "Missing wheelhouse: $Wheelhouse"
 }
+$BundledResources = Join-Path $BundleDir "hermes-resources"
+if (-not (Test-Path $BundledResources)) {
+  throw "Missing Hermes runtime resources: $BundledResources"
+}
 
 Stop-ExistingHermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ShimDirs
-foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $VenvDir)) {
+foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $RuntimeResources, $VenvDir)) {
   Remove-InstallPath -Path $Path
 }
 Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
@@ -344,6 +384,7 @@ New-Item -ItemType Directory -Force -Path $RuntimeCommands | Out-Null
 Copy-Item -Force (Join-Path $ScriptDir "launch_windows.ps1") (Join-Path $RuntimeCommands "launch_windows.ps1")
 Copy-Item -Force (Join-Path $ScriptDir "shutdown_windows.ps1") (Join-Path $RuntimeCommands "shutdown_windows.ps1")
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
+Copy-Item -Recurse -Force $BundledResources $RuntimeResources
 
 $Candidates = @(
   (Join-Path $RuntimeBundle "python\python.exe"),
@@ -394,13 +435,13 @@ if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $Venv
   throw "Python venv was not created correctly: $VenvDir"
 }
 $RuntimePackages = @(
-  "aiohttp==3.13.3",
+  "aiohttp==3.13.4",
   "fastapi==0.133.1",
   "python-multipart",
   "uvicorn==0.41.0",
   "websockets"
 )
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse hermes-agent croniter @RuntimePackages
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse "hermes-agent[all]" croniter @RuntimePackages
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
@@ -413,6 +454,12 @@ $HermesExe = Join-Path $VenvDir "Scripts\hermes.exe"
 if (-not (Test-Path $HermesExe)) {
   throw "Hermes executable was not created: $HermesExe"
 }
+$BundledSkillsDir = Join-Path $RuntimeResources "skills"
+$OptionalSkillsDir = Join-Path $RuntimeResources "optional-skills"
+$OptionalMcpsDir = Join-Path $RuntimeResources "optional-mcps"
+$BundledLocalesDir = Join-Path $RuntimeResources "locales"
+$BundledPluginsDir = Join-Path $RuntimeResources "plugins"
+$WebDistDir = Join-Path $RuntimeResources "web_dist"
 $ShimLines = @(
   "@echo off",
   "chcp 65001 >nul",
@@ -420,6 +467,12 @@ $ShimLines = @(
   'set "PYTHONIOENCODING=utf-8"',
   ('set "HERMES_HOME={0}"' -f $HermesHome),
   ('set "HERMES_PYTHON={0}"' -f $VenvPython),
+  ('set "HERMES_BUNDLED_SKILLS={0}"' -f $BundledSkillsDir),
+  ('set "HERMES_OPTIONAL_SKILLS={0}"' -f $OptionalSkillsDir),
+  ('set "HERMES_OPTIONAL_MCPS={0}"' -f $OptionalMcpsDir),
+  ('set "HERMES_BUNDLED_LOCALES={0}"' -f $BundledLocalesDir),
+  ('set "HERMES_BUNDLED_PLUGINS={0}"' -f $BundledPluginsDir),
+  ('set "HERMES_WEB_DIST={0}"' -f $WebDistDir),
   ('"{0}" %*' -f $HermesExe)
 )
 $DashboardShimLines = @(
@@ -430,6 +483,12 @@ $DashboardShimLines = @(
   'set "PYTHONIOENCODING=utf-8"',
   ('set "HERMES_HOME={0}"' -f $HermesHome),
   ('set "HERMES_PYTHON={0}"' -f $VenvPython),
+  ('set "HERMES_BUNDLED_SKILLS={0}"' -f $BundledSkillsDir),
+  ('set "HERMES_OPTIONAL_SKILLS={0}"' -f $OptionalSkillsDir),
+  ('set "HERMES_OPTIONAL_MCPS={0}"' -f $OptionalMcpsDir),
+  ('set "HERMES_BUNDLED_LOCALES={0}"' -f $BundledLocalesDir),
+  ('set "HERMES_BUNDLED_PLUGINS={0}"' -f $BundledPluginsDir),
+  ('set "HERMES_WEB_DIST={0}"' -f $WebDistDir),
   ('"{0}" dashboard %*' -f $HermesExe)
 )
 $LaunchShimLines = @(
@@ -460,11 +519,23 @@ $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome
 $env:HERMES_OFFLINE_HOME = $InstallRoot
 $env:HERMES_PYTHON = $VenvPython
+$env:HERMES_BUNDLED_SKILLS = $BundledSkillsDir
+$env:HERMES_OPTIONAL_SKILLS = $OptionalSkillsDir
+$env:HERMES_OPTIONAL_MCPS = $OptionalMcpsDir
+$env:HERMES_BUNDLED_LOCALES = $BundledLocalesDir
+$env:HERMES_BUNDLED_PLUGINS = $BundledPluginsDir
+$env:HERMES_WEB_DIST = $WebDistDir
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
 [Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $InstallRoot, "User")
 [Environment]::SetEnvironmentVariable("HERMES_PYTHON", $VenvPython, "User")
+[Environment]::SetEnvironmentVariable("HERMES_BUNDLED_SKILLS", $BundledSkillsDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_OPTIONAL_SKILLS", $OptionalSkillsDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_OPTIONAL_MCPS", $OptionalMcpsDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_BUNDLED_LOCALES", $BundledLocalesDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_BUNDLED_PLUGINS", $BundledPluginsDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_WEB_DIST", $WebDistDir, "User")
 [Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "User")
 [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "User")
 Ensure-HermesPythonCompatibilityPath -CompatVenvDir $CompatVenvDir -VenvDir $VenvDir
@@ -496,7 +567,7 @@ if ($OpenAiBaseUrlLine -and -not $CustomBaseUrlLine) {
   Write-Host "Added CUSTOM_BASE_URL from existing OPENAI_BASE_URL for custom endpoint detection."
 }
 
-Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome
+Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -ResourcesDir $RuntimeResources
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($UserPath -split ";") -notcontains $BinDir -or ($UserPath -split ";") -notcontains $LocalBinDir) {
@@ -528,4 +599,5 @@ Write-Host "launch: $LaunchCmd"
 Write-Host "shutdown: $ShutdownCmd"
 Write-Host "config: $ConfigPath"
 Write-Host "skills: $(Join-Path $HermesHome 'skills')"
+Write-Host "resources: $RuntimeResources"
 Write-Host "Please reopen PowerShell for PATH changes to take effect."
