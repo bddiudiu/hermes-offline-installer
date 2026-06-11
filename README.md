@@ -158,34 +158,6 @@ The offline wheelhouse includes dependencies needed by `hermes dashboard`, inclu
 
 Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources` and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
 
-## Release and OSS
-
-GitHub Actions creates a GitHub Release for tagged builds and can upload the same artifacts to Aliyun OSS. The OSS workflow generates:
-
-```text
-hermes/latest.json
-```
-
-By default, versioned artifacts are uploaded under:
-
-```text
-hermes/<hermes-agent-version>-<github-run-number>/
-```
-
-`latest.json` uses a lightweight edition structure, and `editions.en.base_url` points to the latest Windows zip URL.
-
-Required GitHub Secrets:
-
-- `ALIYUN_OSS_BUCKET`
-- `ALIYUN_OSS_ENDPOINT`
-- `ALIYUN_OSS_ACCESS_KEY_ID`
-- `ALIYUN_OSS_ACCESS_KEY_SECRET`
-- `ALIYUN_OSS_PUBLIC_BASE_URL`
-
-Optional GitHub Variable:
-
-- `ALIYUN_OSS_PREFIX`
-
 ## Install Layout
 
 - Runtime: `~/.hermes-offline/runtime` or `%USERPROFILE%\.hermes-offline\runtime`; override with `HERMES_OFFLINE_HOME`.
