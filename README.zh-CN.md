@@ -1,5 +1,7 @@
 # Hermes Offline Installer
 
+[English](README.md)
+
 Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、离线 Python wheels、Dashboard 资源、skills、plugins、locales 和安装脚本打包在一起，让最终用户无需手动安装 Python、`uv` 或 Git 即可安装 Hermes。
 
 项目目标是在 Windows、macOS 和 Linux 上生成可分发的一键离线安装包。安装阶段只使用包内资源，不依赖 GitHub 或 PyPI 网络访问。

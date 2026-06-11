@@ -1,5 +1,7 @@
 # Hermes Offline Installer
 
+[简体中文](README.zh-CN.md)
+
 Hermes Offline Installer packages Hermes Agent with a portable Python runtime, `uv`, offline Python wheels, dashboard assets, skills, plugins, locales, and installer scripts, so Hermes can be installed without requiring end users to install Python, `uv`, or Git.
 
 项目目标是在 Windows、macOS 和 Linux 上生成可分发的一键离线安装包。安装阶段只使用包内资源，不依赖 GitHub 或 PyPI 网络访问。
