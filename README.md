@@ -10,9 +10,9 @@ Hermes Offline Installer packages Hermes Agent with a portable Python runtime, `
 
 - Bundles Hermes Agent, portable Python runtime, `uv`, Python dependencies, and runtime resources.
 - Installs or upgrades Hermes without overwriting existing `config.yaml` and `.env`.
-- Provides Windows launch/shutdown helpers and PATH commands.
+- Provides Windows launch, shutdown, uninstall helpers and PATH commands.
 - Supports configurable install locations through `HERMES_HOME` and `HERMES_OFFLINE_HOME`.
-- Exports Hermes runtime resources, including bundled Agent Skills, optional skills catalog, optional MCP catalog, locales, bundled plugins, and Dashboard `web_dist`.
+- Exports Hermes runtime resources, including bundled Agent Skills, optional skills catalog, optional MCP catalog, locales, bundled plugins, Dashboard `web_dist`, and Dashboard TUI `tui_dist`.
 
 ## Artifacts
 
@@ -49,7 +49,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, creates the `%USERPROFILE%\.hermes-venv` compatibility entry, and starts Dashboard by default. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
+The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, and creates the `%USERPROFILE%\.hermes-venv` compatibility entry. It does not start Gateway or Dashboard by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
 
 The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Hermes shim switches to the UTF-8 code page. This avoids encoding issues when agent tools write files or parse terminal output on Chinese Windows environments.
 
@@ -65,10 +65,10 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-To skip automatic Dashboard startup:
+To start Dashboard immediately after install:
 
 ```cmd
-set HERMES_NO_START_DASHBOARD=1
+set HERMES_START_DASHBOARD_AFTER_INSTALL=1
 install_windows.cmd
 ```
 
@@ -84,6 +84,7 @@ After installation, use the bundled helpers:
 ```cmd
 launch.cmd
 shutdown.cmd
+uninstall.cmd
 ```
 
 After reopening PowerShell or CMD, the PATH commands are also available:
@@ -91,6 +92,14 @@ After reopening PowerShell or CMD, the PATH commands are also available:
 ```cmd
 hermes-launch
 hermes-shutdown
+hermes-uninstall
+```
+
+`uninstall.cmd` stops running Hermes processes, removes the offline runtime and shims, removes Hermes user environment variables, and preserves `%USERPROFILE%\.hermes` by default. To remove Hermes user data as well:
+
+```cmd
+set HERMES_UNINSTALL_REMOVE_HOME=1
+uninstall.cmd
 ```
 
 Verify the installation:

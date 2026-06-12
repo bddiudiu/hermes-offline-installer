@@ -10,9 +10,9 @@ Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、
 
 - 打包 Hermes Agent、portable Python runtime、`uv`、Python 依赖和运行时资源。
 - 支持安装或升级 Hermes，并保留已有的 `config.yaml` 和 `.env`。
-- 提供 Windows 启动、停止辅助脚本和 PATH 命令。
+- 提供 Windows 启动、停止、卸载辅助脚本和 PATH 命令。
 - 支持通过 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 自定义安装位置。
-- 导出 Hermes runtime resources，包括内置 Agent Skills、optional skills catalog、optional MCP catalog、locales、bundled plugins 和 Dashboard `web_dist`。
+- 导出 Hermes runtime resources，包括内置 Agent Skills、optional skills catalog、optional MCP catalog、locales、bundled plugins、Dashboard `web_dist` 和 Dashboard TUI `tui_dist`。
 
 ## 产物
 
@@ -49,7 +49,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，创建 `%USERPROFILE%\.hermes-venv` 兼容入口，并默认启动 Dashboard。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
+Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并创建 `%USERPROFILE%\.hermes-venv` 兼容入口。安装完成后不会默认启动 Gateway 或 Dashboard，也不会自动打开 Dashboard 网页。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
 
 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
 
@@ -65,10 +65,10 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-如需安装完成后不自动启动 Dashboard：
+如需安装完成后立刻启动 Dashboard：
 
 ```cmd
-set HERMES_NO_START_DASHBOARD=1
+set HERMES_START_DASHBOARD_AFTER_INSTALL=1
 install_windows.cmd
 ```
 
@@ -84,6 +84,7 @@ install_windows.cmd
 ```cmd
 launch.cmd
 shutdown.cmd
+uninstall.cmd
 ```
 
 重新打开 PowerShell 或 CMD 后，也可以直接使用 PATH 命令：
@@ -91,6 +92,14 @@ shutdown.cmd
 ```cmd
 hermes-launch
 hermes-shutdown
+hermes-uninstall
+```
+
+`uninstall.cmd` 会停止正在运行的 Hermes 进程，删除离线 runtime 和 shims，并清理 Hermes 用户环境变量；默认保留 `%USERPROFILE%\.hermes` 用户配置。如需同时删除用户配置：
+
+```cmd
+set HERMES_UNINSTALL_REMOVE_HOME=1
+uninstall.cmd
 ```
 
 验证安装：

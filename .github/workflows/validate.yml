@@ -37,6 +37,7 @@ jobs:
             "installers/install_windows.ps1",
             "installers/launch_windows.ps1",
             "installers/shutdown_windows.ps1",
+            "installers/uninstall_windows.ps1",
             "scripts/verify_windows.ps1"
           )) {
             $tokens = $null

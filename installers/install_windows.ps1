@@ -252,6 +252,19 @@ function Start-HermesDashboard {
   }
 }
 
+function Start-HermesDashboardAfterInstall {
+  param(
+    [string] $HermesCmd,
+    [int] $Port
+  )
+
+  if ($env:HERMES_START_DASHBOARD_AFTER_INSTALL -eq "1") {
+    Start-HermesDashboard -HermesCmd $HermesCmd -Port $Port
+  } else {
+    Write-Host "Dashboard startup skipped. Run launch.cmd or hermes dashboard when you want to start it."
+  }
+}
+
 function Ensure-HermesPythonCompatibilityPath {
   param(
     [string] $CompatVenvDir,
@@ -404,6 +417,7 @@ Copy-Item -Recurse -Force (Join-Path $BundleDir "templates") $RuntimeTemplates
 New-Item -ItemType Directory -Force -Path $RuntimeCommands | Out-Null
 Copy-Item -Force (Join-Path $ScriptDir "launch_windows.ps1") (Join-Path $RuntimeCommands "launch_windows.ps1")
 Copy-Item -Force (Join-Path $ScriptDir "shutdown_windows.ps1") (Join-Path $RuntimeCommands "shutdown_windows.ps1")
+Copy-Item -Force (Join-Path $ScriptDir "uninstall_windows.ps1") (Join-Path $RuntimeCommands "uninstall_windows.ps1")
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
 Copy-Item -Recurse -Force $BundledResources $RuntimeResources
 
@@ -523,6 +537,10 @@ $ShutdownShimLines = @(
   "@echo off",
   ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "shutdown_windows.ps1"))
 )
+$UninstallShimLines = @(
+  "@echo off",
+  ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "uninstall_windows.ps1"))
+)
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
@@ -532,6 +550,8 @@ foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes-launch.bat") -Encoding ASCII -Value $LaunchShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Encoding ASCII -Value $ShutdownShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Encoding ASCII -Value $UninstallShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Encoding ASCII -Value $UninstallShimLines
   Remove-HermesExeShim -ShimDir $ShimDir
 }
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
@@ -610,14 +630,16 @@ if ($LASTEXITCODE -ne 0) {
   throw "Hermes version check failed with exit code $LASTEXITCODE."
 }
 
-Start-HermesDashboard -HermesCmd $HermesCmd -Port 9119
+Start-HermesDashboardAfterInstall -HermesCmd $HermesCmd -Port 9119
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
 $LaunchCmd = Join-Path $BinDir "hermes-launch.cmd"
 $ShutdownCmd = Join-Path $BinDir "hermes-shutdown.cmd"
+$UninstallCmd = Join-Path $BinDir "hermes-uninstall.cmd"
 Write-Host "launch: $LaunchCmd"
 Write-Host "shutdown: $ShutdownCmd"
+Write-Host "uninstall: $UninstallCmd"
 Write-Host "config: $ConfigPath"
 Write-Host "skills: $(Join-Path $HermesHome 'skills')"
 Write-Host "resources: $RuntimeResources"

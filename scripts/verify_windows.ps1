@@ -13,6 +13,8 @@ $ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } 
 $ShimDirs = @((Join-Path $InstallRoot "bin"), $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
 
 if (-not (Test-Path $HermesCmd)) { throw "缺少 hermes shim: $HermesCmd" }
+$HermesUninstallCmd = Join-Path $InstallRoot "bin\hermes-uninstall.cmd"
+if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim: $HermesUninstallCmd" }
 foreach ($ShimDir in $ShimDirs) {
   $HermesExeShim = Join-Path $ShimDir "hermes.exe"
   if (Test-Path $HermesExeShim) {
