@@ -283,6 +283,24 @@ function Ensure-HermesPythonCompatibilityPath {
   }
 }
 
+function Remove-HermesExeShim {
+  param(
+    [string] $ShimDir
+  )
+
+  $ShimExe = Join-Path $ShimDir "hermes.exe"
+  if (-not (Test-Path $ShimExe)) {
+    return
+  }
+
+  try {
+    Remove-Item -Force $ShimExe -ErrorAction Stop
+    Write-Host "Removed legacy Hermes exe shim: $ShimExe"
+  } catch {
+    throw "Could not remove legacy Hermes exe shim $ShimExe. Please close Hermes/ClawPanel and rerun install.cmd. Error: $($_.Exception.Message)"
+  }
+}
+
 function Sync-BundledSkills {
   param(
     [string] $VenvPython,
@@ -508,12 +526,7 @@ foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes-launch.bat") -Encoding ASCII -Value $LaunchShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Encoding ASCII -Value $ShutdownShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
-  $ShimExe = Join-Path $ShimDir "hermes.exe"
-  try {
-    Copy-Item -Force $HermesExe $ShimExe
-  } catch {
-    Write-Warning "Could not update $ShimExe. It may be in use by another process. The hermes.cmd and hermes.bat shims were updated and can still launch Hermes."
-  }
+  Remove-HermesExeShim -ShimDir $ShimDir
 }
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome

@@ -7,8 +7,18 @@ $ResourcesDir = Join-Path $InstallRoot "runtime\hermes-resources"
 $Config = Join-Path $HermesHome "config.yaml"
 $EnvFile = Join-Path $HermesHome ".env"
 $SkillsDir = Join-Path $HermesHome "skills"
+$LocalBinDir = Join-Path $env:USERPROFILE ".local\bin"
+$UvToolsBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "uv\tools\bin" } else { $null }
+$ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } else { $null }
+$ShimDirs = @((Join-Path $InstallRoot "bin"), $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
 
 if (-not (Test-Path $HermesCmd)) { throw "缺少 hermes shim: $HermesCmd" }
+foreach ($ShimDir in $ShimDirs) {
+  $HermesExeShim = Join-Path $ShimDir "hermes.exe"
+  if (Test-Path $HermesExeShim) {
+    throw "发现旧 hermes.exe shim，会绕过 hermes.cmd 中的离线 Python 环境变量: $HermesExeShim"
+  }
+}
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
 if (-not (Test-Path $SkillsDir)) { throw "缺少 Agent Skills 目录: $SkillsDir" }
