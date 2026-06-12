@@ -193,7 +193,7 @@ function Remove-HermesShims {
           Remove-Item -Force $ShimPath -ErrorAction Stop
           Write-Host "Removed shim: $ShimPath"
         } catch {
-          Write-Warning "Could not remove shim $ShimPath: $($_.Exception.Message)"
+          Write-Warning "Could not remove shim ${ShimPath}: $($_.Exception.Message)"
         }
       }
     }
