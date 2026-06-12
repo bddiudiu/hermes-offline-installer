@@ -30,6 +30,8 @@ HERMES_RESOURCE_SENTINELS = [
     "locales/en.yaml",
     "plugins/disk-cleanup/plugin.yaml",
     "web_dist/index.html",
+    "tui_dist/dist/entry.js",
+    "tui_dist/package.json",
 ]
 
 

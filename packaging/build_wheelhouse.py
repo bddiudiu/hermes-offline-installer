@@ -50,6 +50,8 @@ HERMES_RESOURCE_SENTINELS = [
     "optional-mcps/linear/manifest.yaml",
     "locales/en.yaml",
     "plugins/disk-cleanup/plugin.yaml",
+    "tui_dist/dist/entry.js",
+    "tui_dist/package.json",
 ]
 
 
@@ -116,6 +118,15 @@ def prepare_hermes_source(hermes_spec: str, work_dir: Path) -> HermesSource:
     if not dist_index.exists():
         raise SystemExit(f"Dashboard frontend build did not create {dist_index}")
 
+    run([npm, "ci", "--workspace", "ui-tui"], cwd=source_dir, env=npm_env)
+    run([npm, "run", "build", "--workspace", "ui-tui"], cwd=source_dir, env=os.environ.copy())
+    tui_entry = source_dir / "ui-tui" / "dist" / "entry.js"
+    if not tui_entry.exists():
+        raise SystemExit(f"TUI frontend build did not create {tui_entry}")
+    hermes_cli_tui_dist = source_dir / "hermes_cli" / "tui_dist"
+    hermes_cli_tui_dist.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(tui_entry, hermes_cli_tui_dist / "entry.js")
+
     return HermesSource(spec=f"{name} @ {source_dir.as_uri()}", source_dir=source_dir)
 
 
@@ -142,9 +153,13 @@ def export_hermes_resources(source_dir: Path | None, output: Path) -> None:
         raise SystemExit(f"Hermes dashboard web_dist is missing: {web_dist}")
     shutil.copytree(web_dist, resources_dir / "web_dist")
 
-    tui_dist = source_dir / "hermes_cli" / "tui_dist"
-    if tui_dist.is_dir():
-        shutil.copytree(tui_dist, resources_dir / "tui_dist")
+    tui_entry = source_dir / "ui-tui" / "dist" / "entry.js"
+    if not tui_entry.is_file():
+        raise SystemExit(f"Hermes TUI dist is missing: {tui_entry}")
+    tui_resource_dir = resources_dir / "tui_dist"
+    (tui_resource_dir / "dist").mkdir(parents=True)
+    shutil.copy2(tui_entry, tui_resource_dir / "dist" / "entry.js")
+    shutil.copy2(source_dir / "ui-tui" / "package.json", tui_resource_dir / "package.json")
 
     validate_hermes_resources(resources_dir)
 
@@ -233,6 +248,11 @@ def validate_hermes_wheel_has_dashboard(output: Path) -> None:
         raise SystemExit(
             f"{wheel.name} does not include hermes_cli/web_dist/index.html. "
             "Build the dashboard frontend before building the wheel."
+        )
+    if "hermes_cli/tui_dist/entry.js" not in names:
+        raise SystemExit(
+            f"{wheel.name} does not include hermes_cli/tui_dist/entry.js. "
+            "Build the TUI frontend before building the wheel."
         )
 
 

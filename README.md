@@ -157,13 +157,14 @@ The offline wheelhouse includes dependencies needed by `hermes dashboard`, inclu
 - locales
 - bundled plugins
 - Dashboard `web_dist`
+- Dashboard TUI `tui_dist`
 
 Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources` and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
 
 ## Install Layout
 
 - Runtime: `~/.hermes-offline/runtime` or `%USERPROFILE%\.hermes-offline\runtime`; override with `HERMES_OFFLINE_HOME`.
-- Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, and `web_dist`.
+- Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, `web_dist`, and `tui_dist`.
 - Shim: `~/.local/bin/hermes` or `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`.
 - Hermes config: `~/.hermes/config.yaml` and `~/.hermes/.env`; on Windows, `%USERPROFILE%\.hermes\config.yaml` and `%USERPROFILE%\.hermes\.env`; override with `HERMES_HOME`.
 - User plugins, skills, logs, and state follow `HERMES_HOME`.

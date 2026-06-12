@@ -157,13 +157,14 @@ mac-arm64
 - locales
 - bundled plugins
 - Dashboard `web_dist`
+- Dashboard TUI `tui_dist`
 
 安装器会把这些资源复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-resources`，并把内置 Agent Skills 同步到 `$HERMES_HOME/skills`。Dashboard 的 Agent Skills 面板会读取这个目录。
 
 ## 安装位置
 
 - Runtime：`~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 覆盖。
-- Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins` 和 `web_dist`。
+- Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins`、`web_dist` 和 `tui_dist`。
 - Shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`。
 - Hermes 配置：`~/.hermes/config.yaml` 和 `~/.hermes/.env`；Windows 为 `%USERPROFILE%\.hermes\config.yaml` 和 `%USERPROFILE%\.hermes\.env`；可通过 `HERMES_HOME` 覆盖。
 - 用户插件、skills、日志和状态文件跟随 `HERMES_HOME`。

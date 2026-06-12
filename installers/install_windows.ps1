@@ -319,6 +319,7 @@ function Sync-BundledSkills {
   $PreviousBundledLocales = $env:HERMES_BUNDLED_LOCALES
   $PreviousBundledPlugins = $env:HERMES_BUNDLED_PLUGINS
   $PreviousWebDist = $env:HERMES_WEB_DIST
+  $PreviousTuiDir = $env:HERMES_TUI_DIR
   $env:HERMES_HOME = $HermesHome
   $env:HERMES_BUNDLED_SKILLS = Join-Path $ResourcesDir "skills"
   $env:HERMES_OPTIONAL_SKILLS = Join-Path $ResourcesDir "optional-skills"
@@ -326,6 +327,7 @@ function Sync-BundledSkills {
   $env:HERMES_BUNDLED_LOCALES = Join-Path $ResourcesDir "locales"
   $env:HERMES_BUNDLED_PLUGINS = Join-Path $ResourcesDir "plugins"
   $env:HERMES_WEB_DIST = Join-Path $ResourcesDir "web_dist"
+  $env:HERMES_TUI_DIR = Join-Path $ResourcesDir "tui_dist"
   try {
     & $VenvPython -m tools.skills_sync
     if ($LASTEXITCODE -ne 0) {
@@ -343,7 +345,8 @@ function Sync-BundledSkills {
       @("HERMES_OPTIONAL_MCPS", $PreviousOptionalMcps),
       @("HERMES_BUNDLED_LOCALES", $PreviousBundledLocales),
       @("HERMES_BUNDLED_PLUGINS", $PreviousBundledPlugins),
-      @("HERMES_WEB_DIST", $PreviousWebDist)
+      @("HERMES_WEB_DIST", $PreviousWebDist),
+      @("HERMES_TUI_DIR", $PreviousTuiDir)
     )) {
       if ($null -eq $EnvRestore[1]) {
         Remove-Item "Env:$($EnvRestore[0])" -ErrorAction SilentlyContinue
@@ -478,6 +481,7 @@ $OptionalMcpsDir = Join-Path $RuntimeResources "optional-mcps"
 $BundledLocalesDir = Join-Path $RuntimeResources "locales"
 $BundledPluginsDir = Join-Path $RuntimeResources "plugins"
 $WebDistDir = Join-Path $RuntimeResources "web_dist"
+$TuiDir = Join-Path $RuntimeResources "tui_dist"
 $ShimLines = @(
   "@echo off",
   "chcp 65001 >nul",
@@ -491,6 +495,7 @@ $ShimLines = @(
   ('set "HERMES_BUNDLED_LOCALES={0}"' -f $BundledLocalesDir),
   ('set "HERMES_BUNDLED_PLUGINS={0}"' -f $BundledPluginsDir),
   ('set "HERMES_WEB_DIST={0}"' -f $WebDistDir),
+  ('set "HERMES_TUI_DIR={0}"' -f $TuiDir),
   ('"{0}" %*' -f $HermesExe)
 )
 $DashboardShimLines = @(
@@ -507,6 +512,7 @@ $DashboardShimLines = @(
   ('set "HERMES_BUNDLED_LOCALES={0}"' -f $BundledLocalesDir),
   ('set "HERMES_BUNDLED_PLUGINS={0}"' -f $BundledPluginsDir),
   ('set "HERMES_WEB_DIST={0}"' -f $WebDistDir),
+  ('set "HERMES_TUI_DIR={0}"' -f $TuiDir),
   ('"{0}" dashboard %*' -f $HermesExe)
 )
 $LaunchShimLines = @(
@@ -538,6 +544,7 @@ $env:HERMES_OPTIONAL_MCPS = $OptionalMcpsDir
 $env:HERMES_BUNDLED_LOCALES = $BundledLocalesDir
 $env:HERMES_BUNDLED_PLUGINS = $BundledPluginsDir
 $env:HERMES_WEB_DIST = $WebDistDir
+$env:HERMES_TUI_DIR = $TuiDir
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
@@ -549,6 +556,7 @@ $env:PYTHONIOENCODING = "utf-8"
 [Environment]::SetEnvironmentVariable("HERMES_BUNDLED_LOCALES", $BundledLocalesDir, "User")
 [Environment]::SetEnvironmentVariable("HERMES_BUNDLED_PLUGINS", $BundledPluginsDir, "User")
 [Environment]::SetEnvironmentVariable("HERMES_WEB_DIST", $WebDistDir, "User")
+[Environment]::SetEnvironmentVariable("HERMES_TUI_DIR", $TuiDir, "User")
 [Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "User")
 [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "User")
 Ensure-HermesPythonCompatibilityPath -CompatVenvDir $CompatVenvDir -VenvDir $VenvDir

@@ -31,5 +31,10 @@ if (-not (Test-Path (Join-Path $ResourcesDir "optional-mcps\linear\manifest.yaml
 if (-not (Test-Path (Join-Path $ResourcesDir "locales\en.yaml"))) { throw "缺少 locales 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "plugins\disk-cleanup\plugin.yaml"))) { throw "缺少 bundled plugins 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "web_dist\index.html"))) { throw "缺少 Dashboard web_dist 资源" }
+if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\dist\entry.js"))) { throw "缺少 Dashboard TUI dist 资源" }
+if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\package.json"))) { throw "缺少 Dashboard TUI package.json 资源" }
+
+$HermesCmdText = Get-Content -Raw -Path $HermesCmd
+if ($HermesCmdText -notmatch 'HERMES_TUI_DIR') { throw "hermes.cmd 未设置 HERMES_TUI_DIR" }
 
 & $HermesCmd version
