@@ -13,6 +13,7 @@ from pathlib import Path
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
 
 DEFAULT_HERMES_EXTRAS = "all"
+PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
 
 OFFLINE_RUNTIME_REQUIREMENTS = [
     # Required by the api_server platform enabled in templates/config.yaml.
@@ -294,7 +295,7 @@ def main() -> None:
         "pip",
         "download",
         "--python-version",
-        PYTHON_VERSION.replace(".", ""),
+        PYTHON_DOWNLOAD_VERSION,
         "--only-binary=:all:",
         "--dest",
         str(output),

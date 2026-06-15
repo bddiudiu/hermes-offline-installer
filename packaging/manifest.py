@@ -11,7 +11,7 @@ HERMES_SOURCE = os.environ.get(
     "HERMES_SOURCE",
     "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git",
 )
-PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.11")
+PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.12.13")
 UV_VERSION = os.environ.get("UV_VERSION", "0.7.12")
 
 

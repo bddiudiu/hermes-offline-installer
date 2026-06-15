@@ -457,9 +457,10 @@ if (-not (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $null)) {
   if (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $BundledPythonHome) {
     $PythonRuntimeNeedsPythonHome = $true
   } else {
-    $PythonZip = Join-Path $BundledPythonHome "python311.zip"
+    $PythonZip = Get-ChildItem -Path $BundledPythonHome -Filter "python*.zip" -File -ErrorAction SilentlyContinue | Select-Object -First 1
     $LibEncodings = Join-Path $BundledPythonHome "Lib\encodings"
-    throw "Bundled Python failed to import encodings. PYTHONHOME=$BundledPythonHome; python311.zip exists=$(Test-Path $PythonZip); Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
+    $PythonZipStatus = if ($PythonZip) { "$($PythonZip.FullName) exists=True" } else { "python*.zip exists=False" }
+    throw "Bundled Python failed to import encodings. PYTHONHOME=$BundledPythonHome; $PythonZipStatus; Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
   }
 }
 

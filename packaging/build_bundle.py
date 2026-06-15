@@ -14,6 +14,7 @@ from pathlib import Path
 from manifest import PYTHON_VERSION, UV_VERSION, write_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+PYTHON_STDLIB_ZIP = f"python{''.join(PYTHON_VERSION.split('.')[:2])}.zip"
 
 UV_TARGETS = {
     "mac-arm64": "aarch64-apple-darwin",
@@ -103,7 +104,7 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
         print(f"Python runtime executable: {python}")
         print(f"Python runtime home: {python_home}")
         print(f"Python runtime Lib/encodings: {(python_home / 'Lib' / 'encodings').exists()}")
-        print(f"Python runtime python311.zip: {(python_home / 'python311.zip').exists()}")
+        print(f"Python runtime {PYTHON_STDLIB_ZIP}: {(python_home / PYTHON_STDLIB_ZIP).exists()}")
 
     env = os.environ.copy()
     env.pop("PYTHONHOME", None)
@@ -163,7 +164,7 @@ def validate_archive_python_stdlib(platform_name: str, archive: Path) -> None:
         names = set(zf.namelist())
         prefix = f"hermes-offline-installer-{platform_name}/runtime/python/"
         lib_encoding = prefix + "Lib/encodings/__init__.py"
-        nested_zip = prefix + "python311.zip"
+        nested_zip = prefix + PYTHON_STDLIB_ZIP
         if lib_encoding in names:
             return
         if nested_zip in names:

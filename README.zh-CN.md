@@ -138,7 +138,7 @@ hermes dashboard
 
 ## 构建
 
-推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.11` 准备 portable Python runtime，下载 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。
+推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.12.13` 准备 portable Python runtime，下载 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。
 
 本地构建示例：
 
