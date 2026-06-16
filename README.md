@@ -49,7 +49,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, and creates the `%USERPROFILE%\.hermes-venv` compatibility entry. It does not start Gateway or Dashboard by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
+The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, and creates the `%USERPROFILE%\.hermes-venv` compatibility entry. It starts Dashboard silently after installation by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
 
 The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Hermes shim switches to the UTF-8 code page. This avoids encoding issues when agent tools write files or parse terminal output on Chinese Windows environments.
 
@@ -65,10 +65,10 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-To start Dashboard immediately after install:
+To skip Dashboard startup after install:
 
 ```cmd
-set HERMES_START_DASHBOARD_AFTER_INSTALL=1
+set HERMES_NO_START_DASHBOARD=1
 install_windows.cmd
 ```
 

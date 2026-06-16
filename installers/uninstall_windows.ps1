@@ -171,6 +171,8 @@ function Remove-HermesShims {
   $ShimNames = @(
     "hermes.cmd",
     "hermes.bat",
+    "dashboard.cmd",
+    "dashboard.bat",
     "hermes-dashboard.cmd",
     "hermes-dashboard.bat",
     "hermes-launch.cmd",

@@ -240,9 +240,9 @@ function Start-HermesDashboard {
 
   Write-Host "Starting Hermes Dashboard on http://127.0.0.1:$Port ..."
   if ($env:HERMES_START_DASHBOARD_VISIBLE -eq "1" -or $env:HERMES_LAUNCH_VISIBLE -eq "1") {
-    Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
+    Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard --no-open") | Out-Null
   } else {
-    Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard") | Out-Null
+    Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard --no-open") | Out-Null
   }
   Start-Sleep -Seconds 3
   if (Test-LocalTcpPort -Port $Port) {
@@ -258,11 +258,7 @@ function Start-HermesDashboardAfterInstall {
     [int] $Port
   )
 
-  if ($env:HERMES_START_DASHBOARD_AFTER_INSTALL -eq "1") {
-    Start-HermesDashboard -HermesCmd $HermesCmd -Port $Port
-  } else {
-    Write-Host "Dashboard startup skipped. Run launch.cmd or hermes dashboard when you want to start it."
-  }
+  Start-HermesDashboard -HermesCmd $HermesCmd -Port $Port
 }
 
 function Ensure-HermesPythonCompatibilityPath {
@@ -528,7 +524,7 @@ $DashboardShimLines = @(
   ('set "HERMES_BUNDLED_PLUGINS={0}"' -f $BundledPluginsDir),
   ('set "HERMES_WEB_DIST={0}"' -f $WebDistDir),
   ('set "HERMES_TUI_DIR={0}"' -f $TuiDir),
-  ('"{0}" dashboard %*' -f $HermesExe)
+  ('"{0}" dashboard --no-open %*' -f $HermesExe)
 )
 $LaunchShimLines = @(
   "@echo off",
@@ -545,6 +541,8 @@ $UninstallShimLines = @(
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
+  Set-Content -Path (Join-Path $ShimDir "dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-launch.cmd") -Encoding ASCII -Value $LaunchShimLines

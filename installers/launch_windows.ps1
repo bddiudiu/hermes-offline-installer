@@ -44,9 +44,9 @@ if (Test-LocalTcpPort -Port $DashboardPort) {
 
 Write-Host "Starting Hermes Dashboard on http://127.0.0.1:$DashboardPort ..."
 if ($env:HERMES_LAUNCH_VISIBLE -eq "1" -or $env:HERMES_START_DASHBOARD_VISIBLE -eq "1") {
-  Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard") | Out-Null
+  Start-Process -FilePath $env:ComSpec -ArgumentList @("/k", "title Hermes Agent Dashboard && `"$HermesCmd`" dashboard --no-open") | Out-Null
 } else {
-  Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard") | Out-Null
+  Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @("/c", "`"$HermesCmd`" dashboard --no-open") | Out-Null
 }
 
 Start-Sleep -Seconds 3

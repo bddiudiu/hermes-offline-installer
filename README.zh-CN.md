@@ -49,7 +49,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并创建 `%USERPROFILE%\.hermes-venv` 兼容入口。安装完成后不会默认启动 Gateway 或 Dashboard，也不会自动打开 Dashboard 网页。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
+Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并创建 `%USERPROFILE%\.hermes-venv` 兼容入口。安装完成后会默认静默启动 Dashboard，但不会自动打开 Dashboard 网页。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
 
 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
 
@@ -65,10 +65,10 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
-如需安装完成后立刻启动 Dashboard：
+如需安装完成后跳过 Dashboard 启动：
 
 ```cmd
-set HERMES_START_DASHBOARD_AFTER_INSTALL=1
+set HERMES_NO_START_DASHBOARD=1
 install_windows.cmd
 ```
 
