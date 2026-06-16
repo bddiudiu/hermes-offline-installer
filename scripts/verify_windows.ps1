@@ -17,8 +17,8 @@ $HermesUninstallCmd = Join-Path $InstallRoot "bin\hermes-uninstall.cmd"
 if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim: $HermesUninstallCmd" }
 foreach ($ShimDir in $ShimDirs) {
   $HermesExeShim = Join-Path $ShimDir "hermes.exe"
-  if (Test-Path $HermesExeShim) {
-    throw "发现旧 hermes.exe shim，会绕过 hermes.cmd 中的离线 Python 环境变量: $HermesExeShim"
+  if (-not (Test-Path $HermesExeShim)) {
+    throw "缺少 hermes.exe shim: $HermesExeShim"
   }
 }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }

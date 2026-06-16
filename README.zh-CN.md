@@ -55,7 +55,7 @@ Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 
 
 如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，并保留已有 `config.yaml` 和 `.env`。
 
-如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装不再把 `hermes.exe` 复制到 PATH shim 目录，避免它绕过 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
+如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 PATH shim 目录，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
 
 自动化运行时，可关闭重新打开窗口和暂停行为：
 

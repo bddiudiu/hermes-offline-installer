@@ -310,6 +310,124 @@ function Remove-HermesExeShim {
   }
 }
 
+function New-HermesExeShimTemplate {
+  param(
+    [string] $OutputPath
+  )
+
+  $Source = @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+
+public static class HermesShim
+{
+    public static int Main(string[] args)
+    {
+        string exePath = Process.GetCurrentProcess().MainModule.FileName;
+        string shimDir = Path.GetDirectoryName(exePath);
+        string hermesCmd = Path.Combine(shimDir, "hermes.cmd");
+        if (!File.Exists(hermesCmd))
+        {
+            Console.Error.WriteLine("Hermes command shim was not found: " + hermesCmd);
+            return 1;
+        }
+
+        string comSpec = Environment.GetEnvironmentVariable("ComSpec");
+        if (String.IsNullOrEmpty(comSpec))
+        {
+            comSpec = "cmd.exe";
+        }
+
+        StringBuilder command = new StringBuilder();
+        command.Append(QuoteForCommandLine(hermesCmd));
+        foreach (string arg in args)
+        {
+            command.Append(' ');
+            command.Append(QuoteForCommandLine(arg));
+        }
+
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+        startInfo.FileName = comSpec;
+        startInfo.Arguments = "/d /c \"" + command.ToString() + "\"";
+        startInfo.UseShellExecute = false;
+
+        using (Process process = Process.Start(startInfo))
+        {
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+    }
+
+    private static string QuoteForCommandLine(string value)
+    {
+        if (value == null)
+        {
+            return "\"\"";
+        }
+
+        bool needsQuotes = value.Length == 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            if (Char.IsWhiteSpace(value[i]) || value[i] == '"')
+            {
+                needsQuotes = true;
+                break;
+            }
+        }
+
+        if (!needsQuotes)
+        {
+            return value;
+        }
+
+        StringBuilder result = new StringBuilder();
+        result.Append('"');
+        int backslashes = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                result.Append('\\', backslashes * 2 + 1);
+                result.Append('"');
+                backslashes = 0;
+                continue;
+            }
+
+            result.Append('\\', backslashes);
+            backslashes = 0;
+            result.Append(c);
+        }
+
+        result.Append('\\', backslashes * 2);
+        result.Append('"');
+        return result.ToString();
+    }
+}
+'@
+
+  Add-Type -TypeDefinition $Source -Language CSharp -OutputType ConsoleApplication -OutputAssembly $OutputPath
+}
+
+function Install-HermesExeShim {
+  param(
+    [string] $ShimDir,
+    [string] $TemplatePath
+  )
+
+  Remove-HermesExeShim -ShimDir $ShimDir
+  $ShimExe = Join-Path $ShimDir "hermes.exe"
+  Copy-Item -Force $TemplatePath $ShimExe
+}
+
 function Sync-BundledSkills {
   param(
     [string] $VenvPython,
@@ -538,6 +656,8 @@ $UninstallShimLines = @(
   "@echo off",
   ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "uninstall_windows.ps1"))
 )
+$ExeShimTemplate = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.exe" -f ([System.Guid]::NewGuid().ToString("N")))
+New-HermesExeShimTemplate -OutputPath $ExeShimTemplate
 foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
@@ -551,8 +671,9 @@ foreach ($ShimDir in $ShimDirs) {
   Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Encoding ASCII -Value $UninstallShimLines
   Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Encoding ASCII -Value $UninstallShimLines
-  Remove-HermesExeShim -ShimDir $ShimDir
+  Install-HermesExeShim -ShimDir $ShimDir -TemplatePath $ExeShimTemplate
 }
+Remove-Item -Force $ExeShimTemplate -ErrorAction SilentlyContinue
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $env:HERMES_HOME = $HermesHome
 $env:HERMES_OFFLINE_HOME = $InstallRoot

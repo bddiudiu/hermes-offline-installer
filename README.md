@@ -55,7 +55,7 @@ The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Her
 
 To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, and preserves existing `config.yaml` and `.env`.
 
-If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer no longer copies `hermes.exe` into PATH shim directories, so launches go through `hermes.cmd` with `HERMES_PYTHON` and bundled resource environment variables set.
+If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into PATH shim directories for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
 
 For automation, disable relaunch and pause behavior:
 
