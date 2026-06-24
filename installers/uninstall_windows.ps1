@@ -6,12 +6,15 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
 $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
-$LocalBinDir = Join-Path $env:USERPROFILE ".local\bin"
-$UvToolsBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "uv\tools\bin" } else { $null }
-$ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } else { $null }
+$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
+if ($env:APPDATA) {
+  $LegacyShimDirs += (Join-Path $env:APPDATA "uv\tools\bin")
+  $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
+}
+$LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 $HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
 $CompatVenvDir = Join-Path $env:USERPROFILE ".hermes-venv"
-$ShimDirs = @($BinDir, $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
+$ShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
 
 function Test-ProcessMatchesPath {
   param(

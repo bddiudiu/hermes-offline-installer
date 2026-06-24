@@ -20,12 +20,14 @@ sync_bundled_skills() {
   mkdir -p "$HERMES_HOME/skills"
   echo "Syncing bundled Agent Skills to $HERMES_HOME/skills ..."
   HERMES_HOME="$HERMES_HOME" \
+    HERMES_OFFLINE_HOME="$INSTALL_ROOT" \
     HERMES_BUNDLED_SKILLS="$RUNTIME_RESOURCES/skills" \
     HERMES_OPTIONAL_SKILLS="$RUNTIME_RESOURCES/optional-skills" \
     HERMES_OPTIONAL_MCPS="$RUNTIME_RESOURCES/optional-mcps" \
     HERMES_BUNDLED_LOCALES="$RUNTIME_RESOURCES/locales" \
     HERMES_BUNDLED_PLUGINS="$RUNTIME_RESOURCES/plugins" \
     HERMES_WEB_DIST="$RUNTIME_RESOURCES/web_dist" \
+    HERMES_TUI_DIR="$RUNTIME_RESOURCES/tui_dist" \
     "$VENV_PYTHON" -m tools.skills_sync
 
   if [ -f "$HERMES_HOME/.no-bundled-skills" ]; then
@@ -108,6 +110,7 @@ if [ ! -x "$VENV_DIR/bin/hermes" ]; then
 fi
 
 HERMES_HOME_SH="$(printf '%q' "$HERMES_HOME")"
+HERMES_OFFLINE_HOME_SH="$(printf '%q' "$INSTALL_ROOT")"
 HERMES_BIN_SH="$(printf '%q' "$VENV_DIR/bin/hermes")"
 HERMES_PYTHON_SH="$(printf '%q' "$VENV_PYTHON")"
 HERMES_BUNDLED_SKILLS_SH="$(printf '%q' "$RUNTIME_RESOURCES/skills")"
@@ -121,6 +124,7 @@ HERMES_TUI_DIR_SH="$(printf '%q' "$RUNTIME_RESOURCES/tui_dist")"
 cat > "$BIN_DIR/hermes" <<EOF
 #!/usr/bin/env bash
 export HERMES_HOME=$HERMES_HOME_SH
+export HERMES_OFFLINE_HOME=$HERMES_OFFLINE_HOME_SH
 export HERMES_PYTHON=$HERMES_PYTHON_SH
 export HERMES_BUNDLED_SKILLS=$HERMES_BUNDLED_SKILLS_SH
 export HERMES_OPTIONAL_SKILLS=$HERMES_OPTIONAL_SKILLS_SH

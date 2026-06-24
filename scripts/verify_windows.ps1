@@ -2,25 +2,24 @@ $ErrorActionPreference = "Stop"
 
 $InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
 $HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
-$HermesCmd = Join-Path $InstallRoot "bin\hermes.cmd"
+$BinDir = Join-Path $InstallRoot "bin"
+$HermesCmd = Join-Path $BinDir "hermes.cmd"
 $ResourcesDir = Join-Path $InstallRoot "runtime\hermes-resources"
 $Config = Join-Path $HermesHome "config.yaml"
 $EnvFile = Join-Path $HermesHome ".env"
 $SkillsDir = Join-Path $HermesHome "skills"
-$LocalBinDir = Join-Path $env:USERPROFILE ".local\bin"
-$UvToolsBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "uv\tools\bin" } else { $null }
-$ClawPanelBinDir = if ($env:APPDATA) { Join-Path $env:APPDATA "clawpanel\bin" } else { $null }
-$ShimDirs = @((Join-Path $InstallRoot "bin"), $LocalBinDir, $UvToolsBinDir, $ClawPanelBinDir) | Where-Object { $_ } | Select-Object -Unique
+$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
+if ($env:APPDATA) {
+  $LegacyShimDirs += (Join-Path $env:APPDATA "uv\tools\bin")
+  $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
+}
+$LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
 if (-not (Test-Path $HermesCmd)) { throw "缺少 hermes shim: $HermesCmd" }
 $HermesUninstallCmd = Join-Path $InstallRoot "bin\hermes-uninstall.cmd"
 if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim: $HermesUninstallCmd" }
-foreach ($ShimDir in $ShimDirs) {
-  $HermesExeShim = Join-Path $ShimDir "hermes.exe"
-  if (-not (Test-Path $HermesExeShim)) {
-    throw "缺少 hermes.exe shim: $HermesExeShim"
-  }
-}
+$HermesExeShim = Join-Path $BinDir "hermes.exe"
+if (-not (Test-Path $HermesExeShim)) { throw "缺少 hermes.exe shim: $HermesExeShim" }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
 if (-not (Test-Path $SkillsDir)) { throw "缺少 Agent Skills 目录: $SkillsDir" }
@@ -36,7 +35,18 @@ if (-not (Test-Path (Join-Path $ResourcesDir "web_dist\index.html"))) { throw "�
 if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\dist\entry.js"))) { throw "缺少 Dashboard TUI dist 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\package.json"))) { throw "缺少 Dashboard TUI package.json 资源" }
 
-$HermesCmdText = Get-Content -Raw -Path $HermesCmd
-if ($HermesCmdText -notmatch 'HERMES_TUI_DIR') { throw "hermes.cmd 未设置 HERMES_TUI_DIR" }
+foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd")) {
+  $RequiredShim = Join-Path $BinDir $RequiredShimName
+  if (-not (Test-Path $RequiredShim)) { throw "缺少 shim: $RequiredShim" }
+  $RequiredShimText = Get-Content -Raw -Path $RequiredShim
+  if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
+  if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
+}
+foreach ($LegacyShimDir in $LegacyShimDirs) {
+  foreach ($LegacyShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd", "hermes.exe")) {
+    $LegacyShim = Join-Path $LegacyShimDir $LegacyShimName
+    if (Test-Path $LegacyShim) { throw "旧 user shim 未清理: $LegacyShim" }
+  }
+}
 
 & $HermesCmd version

@@ -49,13 +49,32 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, writes `HERMES_HOME`, `HERMES_OFFLINE_HOME`, and `HERMES_PYTHON` to the current user's environment, and creates the `%USERPROFILE%\.hermes-venv` compatibility entry. It starts Dashboard silently after installation by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
+The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, derives the full Hermes user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`, and creates shims only in `%HERMES_OFFLINE_HOME%\bin`. It starts Dashboard silently after installation by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
 
 The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Hermes shim switches to the UTF-8 code page. This avoids encoding issues when agent tools write files or parse terminal output on Chinese Windows environments.
 
+Complete installer environment variable list:
+
+| Variable | Source |
+| --- | --- |
+| `HERMES_HOME` | User-provided value; defaults to `%USERPROFILE%\.hermes` on Windows and `$HOME/.hermes` on Unix |
+| `HERMES_OFFLINE_HOME` | User-provided value; defaults to `%USERPROFILE%\.hermes-offline` on Windows and `$HOME/.hermes-offline` on Unix |
+| `HERMES_PYTHON` | `$HERMES_OFFLINE_HOME/runtime/venv/Scripts/python.exe` on Windows or `$HERMES_OFFLINE_HOME/runtime/venv/bin/python` on Unix |
+| `HERMES_BUNDLED_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/skills` |
+| `HERMES_OPTIONAL_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/optional-skills` |
+| `HERMES_OPTIONAL_MCPS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/optional-mcps` |
+| `HERMES_BUNDLED_LOCALES` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/locales` |
+| `HERMES_BUNDLED_PLUGINS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/plugins` |
+| `HERMES_WEB_DIST` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/web_dist` |
+| `HERMES_TUI_DIR` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/tui_dist` |
+| `PYTHONUTF8` | `1` in the Windows user environment and shim |
+| `PYTHONIOENCODING` | `utf-8` in the Windows user environment and shim |
+
+End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when `HERMES_HOME` and `HERMES_OFFLINE_HOME` point outside the user profile, it does not additionally create `%USERPROFILE%\.local\bin`, `%USERPROFILE%\.hermes-venv`, `%APPDATA%\uv\tools\bin`, or `%APPDATA%\clawpanel\bin`. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
+
 To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, and preserves existing `config.yaml` and `.env`.
 
-If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into PATH shim directories for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
+If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into `%HERMES_OFFLINE_HOME%\bin` for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
 
 For automation, disable relaunch and pause behavior:
 
@@ -95,7 +114,7 @@ hermes-shutdown
 hermes-uninstall
 ```
 
-`uninstall.cmd` stops running Hermes processes, removes the offline runtime and shims, removes Hermes user environment variables, and preserves `%USERPROFILE%\.hermes` by default. To remove Hermes user data as well:
+`uninstall.cmd` stops running Hermes processes, removes the offline runtime and shims, removes Hermes user environment variables, and preserves `HERMES_HOME` by default. To remove Hermes user data as well:
 
 ```cmd
 set HERMES_UNINSTALL_REMOVE_HOME=1
@@ -174,18 +193,35 @@ Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resource
 
 - Runtime: `~/.hermes-offline/runtime` or `%USERPROFILE%\.hermes-offline\runtime`; override with `HERMES_OFFLINE_HOME`.
 - Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, `web_dist`, and `tui_dist`.
-- Shim: `~/.local/bin/hermes` or `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`.
+- Shim: `~/.local/bin/hermes` on Unix; `%HERMES_OFFLINE_HOME%\bin\hermes.cmd` on Windows.
 - Hermes config: `~/.hermes/config.yaml` and `~/.hermes/.env`; on Windows, `%USERPROFILE%\.hermes\config.yaml` and `%USERPROFILE%\.hermes\.env`; override with `HERMES_HOME`.
 - User plugins, skills, logs, and state follow `HERMES_HOME`.
 - Bundled Agent Skills are restored from runtime resources during install or upgrade. User-modified or deleted skills are preserved according to the Hermes bundled manifest rules.
-- Hermes Python: Unix shims set `HERMES_PYTHON`; the Windows installer writes `HERMES_PYTHON` to the user environment.
+- Hermes Python: `HERMES_PYTHON` is derived from `$HERMES_OFFLINE_HOME/runtime/venv`; Unix shims export the Hermes environment variables listed above, and the Windows installer writes them to the user environment.
 
-If Windows reports that the Hermes Python interpreter cannot be found when checking optional dependencies, repair the user environment:
+If Windows reports that the Hermes Python interpreter cannot be found when checking optional dependencies, rebuild the full user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`:
 
 ```powershell
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
 $HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
-[Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $HermesOfflineHome, "User")
-[Environment]::SetEnvironmentVariable("HERMES_PYTHON", (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe"), "User")
+$HermesResources = Join-Path $HermesOfflineHome "runtime\hermes-resources"
+$HermesEnv = [ordered]@{
+  "HERMES_HOME" = $HermesHome
+  "HERMES_OFFLINE_HOME" = $HermesOfflineHome
+  "HERMES_PYTHON" = (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe")
+  "HERMES_BUNDLED_SKILLS" = (Join-Path $HermesResources "skills")
+  "HERMES_OPTIONAL_SKILLS" = (Join-Path $HermesResources "optional-skills")
+  "HERMES_OPTIONAL_MCPS" = (Join-Path $HermesResources "optional-mcps")
+  "HERMES_BUNDLED_LOCALES" = (Join-Path $HermesResources "locales")
+  "HERMES_BUNDLED_PLUGINS" = (Join-Path $HermesResources "plugins")
+  "HERMES_WEB_DIST" = (Join-Path $HermesResources "web_dist")
+  "HERMES_TUI_DIR" = (Join-Path $HermesResources "tui_dist")
+  "PYTHONUTF8" = "1"
+  "PYTHONIOENCODING" = "utf-8"
+}
+foreach ($Entry in $HermesEnv.GetEnumerator()) {
+  [Environment]::SetEnvironmentVariable($Entry.Key, $Entry.Value, "User")
+}
 ```
 
 Then reopen PowerShell or CMD.

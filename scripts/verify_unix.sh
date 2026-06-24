@@ -26,6 +26,7 @@ find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {
 [ -f "$RESOURCES_DIR/web_dist/index.html" ] || { echo "缺少 Dashboard web_dist 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/tui_dist/dist/entry.js" ] || { echo "缺少 Dashboard TUI dist 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/tui_dist/package.json" ] || { echo "缺少 Dashboard TUI package.json 资源" >&2; exit 1; }
+grep -q 'HERMES_OFFLINE_HOME' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_OFFLINE_HOME" >&2; exit 1; }
 grep -q 'HERMES_TUI_DIR' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_TUI_DIR" >&2; exit 1; }
 
 "$HERMES_BIN" version

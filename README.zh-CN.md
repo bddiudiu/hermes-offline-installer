@@ -49,13 +49,32 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，把 `HERMES_HOME`、`HERMES_OFFLINE_HOME` 和 `HERMES_PYTHON` 写入当前用户环境变量，并创建 `%USERPROFILE%\.hermes-venv` 兼容入口。安装完成后会默认静默启动 Dashboard，但不会自动打开 Dashboard 网页。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
+Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 runtime，根据 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 派生并写入完整的 Hermes 用户环境变量，并只在 `%HERMES_OFFLINE_HOME%\bin` 创建 shims。安装完成后会默认静默启动 Dashboard，但不会自动打开 Dashboard 网页。安装完成后重新打开 PowerShell 或 CMD，新的环境变量才会生效。
 
 安装器还会设置 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并在 Hermes shim 中切换到 UTF-8 code page，避免 agent tools 在中文 Windows 环境下写入文件或解析终端输出时遇到编码问题。
 
+安装器环境变量完整清单：
+
+| 变量 | 来源 |
+| --- | --- |
+| `HERMES_HOME` | 用户传入值；默认 Windows 为 `%USERPROFILE%\.hermes`，Unix 为 `$HOME/.hermes` |
+| `HERMES_OFFLINE_HOME` | 用户传入值；默认 Windows 为 `%USERPROFILE%\.hermes-offline`，Unix 为 `$HOME/.hermes-offline` |
+| `HERMES_PYTHON` | `$HERMES_OFFLINE_HOME/runtime/venv/Scripts/python.exe`（Windows）或 `$HERMES_OFFLINE_HOME/runtime/venv/bin/python`（Unix） |
+| `HERMES_BUNDLED_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/skills` |
+| `HERMES_OPTIONAL_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/optional-skills` |
+| `HERMES_OPTIONAL_MCPS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/optional-mcps` |
+| `HERMES_BUNDLED_LOCALES` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/locales` |
+| `HERMES_BUNDLED_PLUGINS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/plugins` |
+| `HERMES_WEB_DIST` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/web_dist` |
+| `HERMES_TUI_DIR` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/tui_dist` |
+| `PYTHONUTF8` | `1`（Windows 用户环境变量和 shim） |
+| `PYTHONIOENCODING` | `utf-8`（Windows 用户环境变量和 shim） |
+
+其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 指向非 user 路径时，不会额外创建 `%USERPROFILE%\.local\bin`、`%USERPROFILE%\.hermes-venv`、`%APPDATA%\uv\tools\bin` 或 `%APPDATA%\clawpanel\bin`。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
+
 如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，并保留已有 `config.yaml` 和 `.env`。
 
-如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 PATH shim 目录，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
+如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 `%HERMES_OFFLINE_HOME%\bin`，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
 
 自动化运行时，可关闭重新打开窗口和暂停行为：
 
@@ -95,7 +114,7 @@ hermes-shutdown
 hermes-uninstall
 ```
 
-`uninstall.cmd` 会停止正在运行的 Hermes 进程，删除离线 runtime 和 shims，并清理 Hermes 用户环境变量；默认保留 `%USERPROFILE%\.hermes` 用户配置。如需同时删除用户配置：
+`uninstall.cmd` 会停止正在运行的 Hermes 进程，删除离线 runtime 和 shims，并清理 Hermes 用户环境变量；默认保留 `HERMES_HOME` 用户配置。如需同时删除用户配置：
 
 ```cmd
 set HERMES_UNINSTALL_REMOVE_HOME=1
@@ -174,18 +193,35 @@ mac-arm64
 
 - Runtime：`~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 覆盖。
 - Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins`、`web_dist` 和 `tui_dist`。
-- Shim：`~/.local/bin/hermes` 或 `%USERPROFILE%\.hermes-offline\bin\hermes.cmd`。
+- Shim：Unix 为 `~/.local/bin/hermes`；Windows 为 `%HERMES_OFFLINE_HOME%\bin\hermes.cmd`。
 - Hermes 配置：`~/.hermes/config.yaml` 和 `~/.hermes/.env`；Windows 为 `%USERPROFILE%\.hermes\config.yaml` 和 `%USERPROFILE%\.hermes\.env`；可通过 `HERMES_HOME` 覆盖。
 - 用户插件、skills、日志和状态文件跟随 `HERMES_HOME`。
 - 内置 Agent Skills 会在安装或升级时从 runtime resources 恢复。用户修改或删除过的 skills 会按照 Hermes bundled manifest 规则保留。
-- Hermes Python：Unix shims 会设置 `HERMES_PYTHON`；Windows 安装器会把 `HERMES_PYTHON` 写入用户环境变量。
+- Hermes Python：`HERMES_PYTHON` 从 `$HERMES_OFFLINE_HOME/runtime/venv` 派生；Unix shim 会导出上表 Hermes 环境变量，Windows 安装器会写入用户环境变量。
 
-如果 Windows 在检查可选依赖时提示找不到 Hermes Python 解释器，可修复用户环境变量：
+如果 Windows 在检查可选依赖时提示找不到 Hermes Python 解释器，可按 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 修复完整用户环境变量：
 
 ```powershell
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
 $HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
-[Environment]::SetEnvironmentVariable("HERMES_OFFLINE_HOME", $HermesOfflineHome, "User")
-[Environment]::SetEnvironmentVariable("HERMES_PYTHON", (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe"), "User")
+$HermesResources = Join-Path $HermesOfflineHome "runtime\hermes-resources"
+$HermesEnv = [ordered]@{
+  "HERMES_HOME" = $HermesHome
+  "HERMES_OFFLINE_HOME" = $HermesOfflineHome
+  "HERMES_PYTHON" = (Join-Path $HermesOfflineHome "runtime\venv\Scripts\python.exe")
+  "HERMES_BUNDLED_SKILLS" = (Join-Path $HermesResources "skills")
+  "HERMES_OPTIONAL_SKILLS" = (Join-Path $HermesResources "optional-skills")
+  "HERMES_OPTIONAL_MCPS" = (Join-Path $HermesResources "optional-mcps")
+  "HERMES_BUNDLED_LOCALES" = (Join-Path $HermesResources "locales")
+  "HERMES_BUNDLED_PLUGINS" = (Join-Path $HermesResources "plugins")
+  "HERMES_WEB_DIST" = (Join-Path $HermesResources "web_dist")
+  "HERMES_TUI_DIR" = (Join-Path $HermesResources "tui_dist")
+  "PYTHONUTF8" = "1"
+  "PYTHONIOENCODING" = "utf-8"
+}
+foreach ($Entry in $HermesEnv.GetEnumerator()) {
+  [Environment]::SetEnvironmentVariable($Entry.Key, $Entry.Value, "User")
+}
 ```
 
 然后重新打开 PowerShell 或 CMD。
