@@ -869,7 +869,7 @@ function Set-ZhanAiDefaultModelConfig {
   Ensure-ModelProviderLine -Lines $MutableLines
   Ensure-ZhanAiProviderBlock -Lines $MutableLines
   $OutputLines = $MutableLines.ToArray()
-  Set-Content -Path $ConfigPath -Encoding UTF8 -Value $OutputLines
+  Set-Content -Path $ConfigPath -Encoding ASCII -Value $OutputLines
   Write-Host "Configured default model provider: custom:zhan_ai"
 }
 
@@ -884,7 +884,19 @@ if ($env:HERMES_HOME -and -not $CustomHermesHome) {
 if (-not $PortableMode -and (Test-PathUnderRoot -Path $InstallRoot -Root $DefaultProgramFilesRoot) -and -not (Test-IsAdministrator)) {
   throw "Windows default installation writes to $InstallRoot and requires administrator rights. Run install.cmd again and accept the UAC prompt, or extract the bundle to a writable folder and run install.cmd -Portable."
 }
-$IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
+$ExistingConfigPath = Join-Path $HermesHome "config.yaml"
+$ExistingEnvPath = Join-Path $HermesHome ".env"
+$ExistingSkillsDir = Join-Path $HermesHome "skills"
+$ExistingRuntimeResources = Join-Path $RuntimeDir "hermes-resources"
+$IsUpgrade = (
+  (Test-Path $VenvDir) -or
+  (Test-Path $RuntimeBundle) -or
+  (Test-Path $ExistingHermesCmd) -or
+  (Test-Path $ExistingRuntimeResources) -or
+  (Test-Path $ExistingConfigPath) -or
+  (Test-Path $ExistingEnvPath) -or
+  (Test-Path $ExistingSkillsDir)
+)
 if ($IsUpgrade) {
   Write-Host "Existing Hermes offline installation detected. Running upgrade."
 } else {
