@@ -693,6 +693,16 @@ function New-StringList {
   return ,$List
 }
 
+function Write-Utf8NoBomLines {
+  param(
+    [string] $Path,
+    [string[]] $Lines
+  )
+
+  $Encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllLines($Path, $Lines, $Encoding)
+}
+
 function Find-TopLevelYamlKey {
   param(
     [System.Collections.Generic.List[string]] $Lines,
@@ -869,7 +879,7 @@ function Set-ZhanAiDefaultModelConfig {
   Ensure-ModelProviderLine -Lines $MutableLines
   Ensure-ZhanAiProviderBlock -Lines $MutableLines
   $OutputLines = $MutableLines.ToArray()
-  Set-Content -Path $ConfigPath -Encoding ASCII -Value $OutputLines
+  Write-Utf8NoBomLines -Path $ConfigPath -Lines $OutputLines
   Write-Host "Configured default model provider: custom:zhan_ai"
 }
 
