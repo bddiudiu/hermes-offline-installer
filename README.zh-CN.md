@@ -32,7 +32,7 @@ Release 产物采用以下命名规则：
 
 ### Windows
 
-下载并解压 `hermes-offline-installer-win-x64.zip`，然后在解压目录以管理员身份运行安装入口：
+下载并解压 `hermes-offline-installer-win-x64.zip`，然后在解压目录运行安装入口：
 
 ```cmd
 install.cmd
@@ -57,7 +57,7 @@ set HERMES_PORTABLE_MODE=1
 install.cmd
 ```
 
-Windows 默认安装会使用固定产品目录：Hermes 配置、skills、日志和缓存位于 `C:\ProgramData\SSC\ZhanClaw\Hermes`，离线 runtime 位于 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`。默认模式不会再创建 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline`。因为 runtime 位于 `Program Files`，默认安装和卸载需要管理员权限。
+Windows 默认安装会使用固定产品目录：Hermes 配置、skills、日志和缓存位于 `C:\ProgramData\SSC\ZhanClaw\Hermes`，离线 runtime 位于 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`。默认模式不会再创建 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline`。因为 runtime 位于 `Program Files`，默认安装和卸载需要管理员权限；`install.cmd` 和 `uninstall.cmd` 会在需要时自动弹出 UAC 提权窗口。
 
 便携模式默认使用解压目录下的 `.hermes-offline` 作为 runtime 目录，`.hermes` 作为 Hermes 用户数据目录。安装完成后继续使用同一解压目录里的 `launch.cmd`、`shutdown.cmd` 和 `uninstall.cmd` 即可；这些脚本会自动识别本地便携安装。
 

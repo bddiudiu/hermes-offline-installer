@@ -690,7 +690,7 @@ if ($env:HERMES_HOME -and -not $CustomHermesHome) {
   Write-Host "Ignoring legacy HERMES_HOME=$env:HERMES_HOME; using $HermesHome."
 }
 if (-not $PortableMode -and (Test-PathUnderRoot -Path $InstallRoot -Root $DefaultProgramFilesRoot) -and -not (Test-IsAdministrator)) {
-  throw "Windows default installation writes to $InstallRoot and requires administrator rights. Please right-click install.cmd and choose Run as administrator, or run install.cmd -Portable to keep files in the extracted folder."
+  throw "Windows default installation writes to $InstallRoot and requires administrator rights. Run install.cmd again and accept the UAC prompt, or extract the bundle to a writable folder and run install.cmd -Portable."
 }
 $IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
 if ($IsUpgrade) {

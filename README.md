@@ -32,7 +32,7 @@ The current GitHub Actions release workflow builds `win-x64` first. The packagin
 
 ### Windows
 
-Download and unzip `hermes-offline-installer-win-x64.zip`, then run the installer from the extracted directory as administrator:
+Download and unzip `hermes-offline-installer-win-x64.zip`, then run the installer from the extracted directory:
 
 ```cmd
 install.cmd
@@ -57,7 +57,7 @@ set HERMES_PORTABLE_MODE=1
 install.cmd
 ```
 
-The default Windows install uses fixed product directories: Hermes config, skills, logs, and caches live under `C:\ProgramData\SSC\ZhanClaw\Hermes`, and the offline runtime lives under `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`. Default mode no longer creates `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline`. Because the runtime is under `Program Files`, default install and uninstall require administrator rights.
+The default Windows install uses fixed product directories: Hermes config, skills, logs, and caches live under `C:\ProgramData\SSC\ZhanClaw\Hermes`, and the offline runtime lives under `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`. Default mode no longer creates `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline`. Because the runtime is under `Program Files`, default install and uninstall require administrator rights; `install.cmd` and `uninstall.cmd` automatically request UAC elevation when needed.
 
 Portable mode defaults to `.hermes-offline` for the runtime and `.hermes` for Hermes user data inside the extracted directory. After installation, keep using `launch.cmd`, `shutdown.cmd`, and `uninstall.cmd` from that same directory; the scripts automatically detect the local portable install.
 
