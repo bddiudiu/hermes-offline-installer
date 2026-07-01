@@ -681,6 +681,198 @@ function Sync-BundledSkills {
   }
 }
 
+function New-StringList {
+  param(
+    [string[]] $Lines
+  )
+
+  $List = New-Object "System.Collections.Generic.List[string]"
+  foreach ($Line in $Lines) {
+    [void] $List.Add($Line)
+  }
+  return ,$List
+}
+
+function Find-TopLevelYamlKey {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [string] $Key
+  )
+
+  $Pattern = "^{0}:\s*(#.*)?$" -f [regex]::Escape($Key)
+  for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
+    if ($Lines[$Index] -match $Pattern) {
+      return $Index
+    }
+  }
+  return -1
+}
+
+function Get-TopLevelYamlBlockEnd {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [int] $StartIndex
+  )
+
+  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
+    $Line = $Lines[$Index]
+    if ($Line -match '^\S' -and $Line -notmatch '^\s*#') {
+      return $Index
+    }
+  }
+  return $Lines.Count
+}
+
+function Get-YamlNestedBlockEnd {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [int] $StartIndex,
+    [int] $Indent
+  )
+
+  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
+    $Line = $Lines[$Index]
+    if ($Line -match '^\s*$' -or $Line -match '^\s*#') {
+      continue
+    }
+    $Leading = ([regex]::Match($Line, '^\s*')).Value.Length
+    if ($Leading -le $Indent) {
+      return $Index
+    }
+  }
+  return $Lines.Count
+}
+
+function Ensure-ModelProviderLine {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $ModelIndex = Find-TopLevelYamlKey -Lines $Lines -Key "model"
+  if ($ModelIndex -lt 0) {
+    $Lines.Insert(0, "")
+    $Lines.Insert(0, "  provider: custom:zhan_ai")
+    $Lines.Insert(0, "  default: gpt-4o-mini")
+    $Lines.Insert(0, "model:")
+    return
+  }
+
+  $ModelEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ModelIndex
+  $DefaultIndex = -1
+  $ProviderIndex = -1
+  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+default\s*:') {
+      $DefaultIndex = $Index
+    }
+    if ($Lines[$Index] -match '^\s+provider\s*:') {
+      $ProviderIndex = $Index
+    }
+  }
+
+  if ($DefaultIndex -lt 0) {
+    $Lines.Insert($ModelIndex + 1, "  default: gpt-4o-mini")
+    $ModelEnd++
+  }
+
+  $ProviderIndex = -1
+  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+provider\s*:') {
+      $ProviderIndex = $Index
+      break
+    }
+  }
+
+  if ($ProviderIndex -ge 0) {
+    $Lines[$ProviderIndex] = "  provider: custom:zhan_ai"
+  } else {
+    $InsertIndex = if ($DefaultIndex -ge 0) { $DefaultIndex + 1 } else { $ModelIndex + 2 }
+    $Lines.Insert($InsertIndex, "  provider: custom:zhan_ai")
+  }
+}
+
+function Ensure-ZhanAiProviderBlock {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $ProvidersIndex = Find-TopLevelYamlKey -Lines $Lines -Key "providers"
+  if ($ProvidersIndex -lt 0) {
+    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
+      [void] $Lines.Add("")
+    }
+    [void] $Lines.Add("providers:")
+    [void] $Lines.Add("  zhan_ai:")
+    [void] $Lines.Add('    api: "${ZHANCLAW_BASE_URL}"')
+    [void] $Lines.Add("    key_env: ZHANCLAW_API_KEY")
+    return
+  }
+
+  $ProvidersEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ProvidersIndex
+  $ZhanIndex = -1
+  for ($Index = $ProvidersIndex + 1; $Index -lt $ProvidersEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}zhan_ai\s*:\s*(#.*)?$') {
+      $ZhanIndex = $Index
+      break
+    }
+  }
+
+  if ($ZhanIndex -lt 0) {
+    $Lines.Insert($ProvidersIndex + 1, "    key_env: ZHANCLAW_API_KEY")
+    $Lines.Insert($ProvidersIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
+    $Lines.Insert($ProvidersIndex + 1, "  zhan_ai:")
+    return
+  }
+
+  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
+  $ApiIndex = -1
+  $KeyEnvIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+api\s*:') {
+      $ApiIndex = $Index
+    }
+    if ($Lines[$Index] -match '^\s+key_env\s*:') {
+      $KeyEnvIndex = $Index
+    }
+  }
+
+  if ($ApiIndex -ge 0) {
+    $Lines[$ApiIndex] = '    api: "${ZHANCLAW_BASE_URL}"'
+  } else {
+    $Lines.Insert($ZhanIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
+    $ZhanEnd++
+  }
+
+  $KeyEnvIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+key_env\s*:') {
+      $KeyEnvIndex = $Index
+      break
+    }
+  }
+  if ($KeyEnvIndex -ge 0) {
+    $Lines[$KeyEnvIndex] = "    key_env: ZHANCLAW_API_KEY"
+  } else {
+    $Lines.Insert($ZhanIndex + 2, "    key_env: ZHANCLAW_API_KEY")
+  }
+}
+
+function Set-ZhanAiDefaultModelConfig {
+  param(
+    [string] $ConfigPath
+  )
+
+  $ConfigLines = @()
+  if (Test-Path $ConfigPath) {
+    $ConfigLines = @(Get-Content -Path $ConfigPath -ErrorAction Stop)
+  }
+  $MutableLines = New-StringList -Lines $ConfigLines
+  Ensure-ModelProviderLine -Lines $MutableLines
+  Ensure-ZhanAiProviderBlock -Lines $MutableLines
+  $OutputLines = $MutableLines.ToArray()
+  Set-Content -Path $ConfigPath -Encoding UTF8 -Value $OutputLines
+  Write-Host "Configured default model provider: custom:zhan_ai"
+}
+
 $ShimDirs = @($BinDir)
 $ProcessShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
 if ($env:HERMES_OFFLINE_HOME -and -not $CustomInstallRoot) {
@@ -936,6 +1128,7 @@ $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
+Set-ZhanAiDefaultModelConfig -ConfigPath $ConfigPath
 
 $EnvPath = Join-Path $HermesHome ".env"
 if (-not (Test-Path $EnvPath)) {

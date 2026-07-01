@@ -93,6 +93,9 @@ if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim:
 $HermesExeShim = Join-Path $BinDir "hermes.exe"
 if (-not (Test-Path $HermesExeShim)) { throw "缺少 hermes.exe shim: $HermesExeShim" }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
+$ConfigText = Get-Content -Raw -Path $Config
+if ($ConfigText -notmatch 'provider:\s*custom:zhan_ai') { throw "config.yaml 未默认选择 zhan_ai 渠道" }
+if ($ConfigText -notmatch 'zhan_ai:' -or $ConfigText -notmatch 'ZHANCLAW_BASE_URL' -or $ConfigText -notmatch 'ZHANCLAW_API_KEY') { throw "config.yaml 缺少 zhan_ai provider 配置" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
 if (-not (Test-Path $SkillsDir)) { throw "缺少 Agent Skills 目录: $SkillsDir" }
 $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File -ErrorAction SilentlyContinue)

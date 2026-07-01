@@ -9,7 +9,7 @@ Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、
 ## 功能
 
 - 打包 Hermes Agent、portable Python runtime、`uv`、Python 依赖和运行时资源。
-- 支持安装或升级 Hermes，并保留已有的 `config.yaml` 和 `.env`。
+- 支持安装或升级 Hermes，保留已有的 `.env`，并在不覆盖其他配置的情况下确保 `config.yaml` 默认选择 `zhan_ai` 模型渠道。
 - 提供 Windows 启动、停止、卸载辅助脚本和 PATH 命令。
 - 提供 Windows 修复入口 `repair.cmd`，可用当前解压包重建 runtime、venv 和 shims。
 - 支持通过 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 自定义安装位置。
@@ -92,7 +92,7 @@ Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 
 
 其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当检测到旧版本写入的 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline` 默认变量时，安装器会把它们视为 legacy 默认值并改用新的 SSC/ZhanClaw 目录，同时清理旧 `%USERPROFILE%\.hermes-offline\bin` 的 PATH 入口。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
 
-如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，并保留已有 `config.yaml` 和 `.env`。
+如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，保留已有 `.env`，并只对 `config.yaml` 中的默认模型渠道和 `zhan_ai` provider 做最小修正。
 
 如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 `%HERMES_OFFLINE_HOME%\bin`，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
 
@@ -285,7 +285,7 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 
 ## 配置
 
-安装器会把默认模型提供商配置为 `zhan_ai`，并从 Windows 用户环境变量读取模型服务配置：
+安装器会把默认模型提供商配置为 `zhan_ai`。如果 `config.yaml` 已存在，安装器不会覆盖其他配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，并补齐 `providers.zhan_ai`。模型服务配置从 Windows 用户环境变量读取：
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")

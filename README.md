@@ -9,7 +9,7 @@ The project builds redistributable one-click offline installers for Windows, mac
 ## Features
 
 - Bundles Hermes Agent, portable Python runtime, `uv`, Python dependencies, and runtime resources.
-- Installs or upgrades Hermes without overwriting existing `config.yaml` and `.env`.
+- Installs or upgrades Hermes, preserving `.env` and ensuring `config.yaml` defaults to the `zhan_ai` model provider without overwriting unrelated settings.
 - Provides Windows launch, shutdown, uninstall helpers and PATH commands.
 - Provides a Windows `repair.cmd` helper that rebuilds the runtime, venv, and shims from the extracted bundle.
 - Supports configurable install locations through `HERMES_HOME` and `HERMES_OFFLINE_HOME`.
@@ -92,7 +92,7 @@ Complete installer environment variable list:
 
 End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when it detects old `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline` defaults, it treats them as legacy values, migrates to the new SSC/ZhanClaw directories, and removes the old `%USERPROFILE%\.hermes-offline\bin` PATH entry. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
 
-To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, and preserves existing `config.yaml` and `.env`.
+To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, preserves `.env`, and only patches the default model provider plus the `zhan_ai` provider block in `config.yaml`.
 
 If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into `%HERMES_OFFLINE_HOME%\bin` for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
 
@@ -285,7 +285,7 @@ Then reopen PowerShell or CMD.
 
 ## Configuration
 
-The installer configures the default model provider as `zhan_ai`, reading model service settings from Windows user environment variables:
+The installer configures the default model provider as `zhan_ai`. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai` and `providers.zhan_ai` is present. Model service settings are read from Windows user environment variables:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
