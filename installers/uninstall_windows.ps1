@@ -3,7 +3,19 @@ $ErrorActionPreference = "Stop"
 Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
+$BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+$LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
+$LocalPortableHome = Join-Path $BundleDirPath ".hermes"
+$PortableMode = (-not $env:HERMES_OFFLINE_HOME) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
+$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+  $env:HERMES_OFFLINE_HOME
+} elseif ($PortableMode) {
+  $LocalPortableRoot
+} else {
+  Join-Path $env:USERPROFILE ".hermes-offline"
+}
 $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
 $LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
@@ -12,7 +24,13 @@ if ($env:APPDATA) {
   $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
 }
 $LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
+$HermesHome = if ($env:HERMES_HOME) {
+  $env:HERMES_HOME
+} elseif ($PortableMode -and (Test-Path $LocalPortableHome)) {
+  $LocalPortableHome
+} else {
+  Join-Path $env:USERPROFILE ".hermes"
+}
 $CompatVenvDir = Join-Path $env:USERPROFILE ".hermes-venv"
 $ShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
 
@@ -180,6 +198,8 @@ function Remove-HermesShims {
     "hermes-dashboard.bat",
     "hermes-launch.cmd",
     "hermes-launch.bat",
+    "hermes-repair.cmd",
+    "hermes-repair.bat",
     "hermes-shutdown.cmd",
     "hermes-shutdown.bat",
     "hermes-uninstall.cmd",
@@ -264,7 +284,9 @@ if ($env:HERMES_UNINSTALL_REMOVE_HOME -eq "1") {
   Write-Host "Preserved Hermes user data: $HermesHome"
   Write-Host "Set HERMES_UNINSTALL_REMOVE_HOME=1 before running uninstall.cmd to remove it."
 }
-Remove-UserEnvironment
-Remove-InstallRootFromUserPath -BinDir $BinDir
+if (-not $PortableMode) {
+  Remove-UserEnvironment
+  Remove-InstallRootFromUserPath -BinDir $BinDir
+}
 
 Write-Host "Hermes Agent uninstalled."

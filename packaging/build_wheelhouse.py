@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
+from read_hermes_version import wheel_version
 
 DEFAULT_HERMES_EXTRAS = "all"
 PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
@@ -257,6 +258,35 @@ def validate_hermes_wheel_has_dashboard(output: Path) -> None:
         )
 
 
+def read_distribution_version(output: Path, distribution: str) -> str:
+    versions = sorted(
+        {
+            version
+            for artifact in output.iterdir()
+            if (version := wheel_version(artifact, distribution))
+        }
+    )
+    if not versions:
+        raise SystemExit(f"Missing {distribution} wheel version in {output}")
+    if len(versions) > 1:
+        raise SystemExit(f"Multiple {distribution} versions found: {', '.join(versions)}")
+    return versions[0]
+
+
+def git_commit(source_dir: Path | None) -> str | None:
+    if source_dir is None or not (source_dir / ".git").exists():
+        return None
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=source_dir,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线 wheelhouse")
     parser.add_argument("--platform", required=True, help="目标平台，例如 mac-arm64、linux-x64、win-x64")
@@ -316,11 +346,19 @@ def main() -> None:
     remove_source_archives(output, "hermes-agent")
     validate_required_wheels(output, OFFLINE_REQUIRED_WHEELS)
     validate_hermes_wheel_has_dashboard(output)
+    hermes_version = read_distribution_version(output, "hermes-agent")
 
     write_manifest(
         output / "manifest.json",
         target_platform=args.platform,
-        extra={"kind": "wheelhouse", "extras": args.extras.split(",") if args.extras else []},
+        extra={
+            "kind": "wheelhouse",
+            "hermes_version": hermes_version,
+            "hermes_install_spec": hermes_spec,
+            "hermes_resolved_spec": hermes_source.spec,
+            "hermes_source_commit": git_commit(hermes_source.source_dir),
+            "extras": args.extras.split(",") if args.extras else [],
+        },
     )
 
 

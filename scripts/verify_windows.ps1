@@ -1,7 +1,25 @@
 $ErrorActionPreference = "Stop"
 
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
-$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
+$BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+$LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
+$LocalPortableHome = Join-Path $BundleDirPath ".hermes"
+$PortableMode = (-not $env:HERMES_OFFLINE_HOME) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
+$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+  $env:HERMES_OFFLINE_HOME
+} elseif ($PortableMode) {
+  $LocalPortableRoot
+} else {
+  Join-Path $env:USERPROFILE ".hermes-offline"
+}
+$HermesHome = if ($env:HERMES_HOME) {
+  $env:HERMES_HOME
+} elseif ($PortableMode -and (Test-Path $LocalPortableHome)) {
+  $LocalPortableHome
+} else {
+  Join-Path $env:USERPROFILE ".hermes"
+}
 $BinDir = Join-Path $InstallRoot "bin"
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $ResourcesDir = Join-Path $InstallRoot "runtime\hermes-resources"
@@ -42,10 +60,12 @@ foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cm
   if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
   if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
 }
-foreach ($LegacyShimDir in $LegacyShimDirs) {
-  foreach ($LegacyShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd", "hermes.exe")) {
-    $LegacyShim = Join-Path $LegacyShimDir $LegacyShimName
-    if (Test-Path $LegacyShim) { throw "旧 user shim 未清理: $LegacyShim" }
+if (-not $PortableMode) {
+  foreach ($LegacyShimDir in $LegacyShimDirs) {
+    foreach ($LegacyShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-repair.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd", "hermes.exe")) {
+      $LegacyShim = Join-Path $LegacyShimDir $LegacyShimName
+      if (Test-Path $LegacyShim) { throw "旧 user shim 未清理: $LegacyShim" }
+    }
   }
 }
 

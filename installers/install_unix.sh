@@ -4,10 +4,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 unset PYTHONHOME PYTHONPATH
-INSTALL_ROOT="${HERMES_OFFLINE_HOME:-$HOME/.hermes-offline}"
+LOCAL_PORTABLE_ROOT="$BUNDLE_DIR/.hermes-offline"
+if [ -n "${HERMES_OFFLINE_HOME:-}" ]; then
+  INSTALL_ROOT="$HERMES_OFFLINE_HOME"
+elif [ "${HERMES_PORTABLE_MODE:-}" = "1" ] || [ -x "$LOCAL_PORTABLE_ROOT/bin/hermes" ]; then
+  INSTALL_ROOT="$LOCAL_PORTABLE_ROOT"
+else
+  INSTALL_ROOT="$HOME/.hermes-offline"
+fi
 RUNTIME_DIR="$INSTALL_ROOT/runtime"
-BIN_DIR="$HOME/.local/bin"
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+if [ "${HERMES_PORTABLE_MODE:-}" = "1" ] || [ "$INSTALL_ROOT" = "$LOCAL_PORTABLE_ROOT" ]; then
+  BIN_DIR="$INSTALL_ROOT/bin"
+  HERMES_HOME="${HERMES_HOME:-$BUNDLE_DIR/.hermes}"
+else
+  BIN_DIR="$HOME/.local/bin"
+  HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+fi
 VENV_DIR="$RUNTIME_DIR/venv"
 RUNTIME_WHEELHOUSE="$RUNTIME_DIR/wheelhouse"
 RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
@@ -102,7 +114,21 @@ RUNTIME_PACKAGES=(
   "uvicorn==0.41.0"
   "websockets"
 )
-"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" "hermes-agent[all]" croniter "${RUNTIME_PACKAGES[@]}"
+HERMES_INSTALL_SPEC="hermes-agent[all]"
+if [ -f "$RUNTIME_WHEELHOUSE/manifest.json" ]; then
+  HERMES_INSTALL_SPEC="$("$PYTHON_BIN" - "$RUNTIME_WHEELHOUSE/manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+extras = [item for item in data.get("extras", []) if item]
+print(f"hermes-agent[{','.join(extras)}]" if extras else "hermes-agent")
+PY
+)"
+fi
+echo "Installing Hermes package spec: $HERMES_INSTALL_SPEC"
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" "$HERMES_INSTALL_SPEC" croniter "${RUNTIME_PACKAGES[@]}"
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
@@ -120,6 +146,16 @@ HERMES_BUNDLED_LOCALES_SH="$(printf '%q' "$RUNTIME_RESOURCES/locales")"
 HERMES_BUNDLED_PLUGINS_SH="$(printf '%q' "$RUNTIME_RESOURCES/plugins")"
 HERMES_WEB_DIST_SH="$(printf '%q' "$RUNTIME_RESOURCES/web_dist")"
 HERMES_TUI_DIR_SH="$(printf '%q' "$RUNTIME_RESOURCES/tui_dist")"
+HERMES_CACHE_DIR="$HERMES_HOME/cache"
+mkdir -p \
+  "$HERMES_CACHE_DIR/huggingface/hub" \
+  "$HERMES_CACHE_DIR/torch" \
+  "$HERMES_CACHE_DIR/tiktoken" \
+  "$HERMES_CACHE_DIR/matplotlib" \
+  "$HERMES_CACHE_DIR/nltk" \
+  "$HERMES_CACHE_DIR/playwright" \
+  "$HERMES_CACHE_DIR/tmp"
+HERMES_CACHE_DIR_SH="$(printf '%q' "$HERMES_CACHE_DIR")"
 
 cat > "$BIN_DIR/hermes" <<EOF
 #!/usr/bin/env bash
@@ -133,6 +169,16 @@ export HERMES_BUNDLED_LOCALES=$HERMES_BUNDLED_LOCALES_SH
 export HERMES_BUNDLED_PLUGINS=$HERMES_BUNDLED_PLUGINS_SH
 export HERMES_WEB_DIST=$HERMES_WEB_DIST_SH
 export HERMES_TUI_DIR=$HERMES_TUI_DIR_SH
+HERMES_CACHE_DIR=$HERMES_CACHE_DIR_SH
+export HERMES_DESKTOP_MANAGED="\${HERMES_DESKTOP_MANAGED:-1}"
+export HF_HOME="\${HF_HOME:-\${HERMES_CACHE_DIR}/huggingface}"
+export HUGGINGFACE_HUB_CACHE="\${HUGGINGFACE_HUB_CACHE:-\${HERMES_CACHE_DIR}/huggingface/hub}"
+export TORCH_HOME="\${TORCH_HOME:-\${HERMES_CACHE_DIR}/torch}"
+export TIKTOKEN_CACHE_DIR="\${TIKTOKEN_CACHE_DIR:-\${HERMES_CACHE_DIR}/tiktoken}"
+export MPLCONFIGDIR="\${MPLCONFIGDIR:-\${HERMES_CACHE_DIR}/matplotlib}"
+export NLTK_DATA="\${NLTK_DATA:-\${HERMES_CACHE_DIR}/nltk}"
+export PLAYWRIGHT_BROWSERS_PATH="\${PLAYWRIGHT_BROWSERS_PATH:-\${HERMES_CACHE_DIR}/playwright}"
+export TMPDIR="\${TMPDIR:-\${HERMES_CACHE_DIR}/tmp}"
 exec $HERMES_BIN_SH "\$@"
 EOF
 chmod +x "$BIN_DIR/hermes"

@@ -1,6 +1,17 @@
 $ErrorActionPreference = "Stop"
 
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
+$BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+$LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
+$LocalPortableHome = Join-Path $BundleDirPath ".hermes"
+$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+  $env:HERMES_OFFLINE_HOME
+} elseif (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd")) {
+  $LocalPortableRoot
+} else {
+  Join-Path $env:USERPROFILE ".hermes-offline"
+}
 $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
 $LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
@@ -9,7 +20,13 @@ if ($env:APPDATA) {
   $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
 }
 $LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
+$HermesHome = if ($env:HERMES_HOME) {
+  $env:HERMES_HOME
+} elseif ($InstallRoot -eq $LocalPortableRoot -and (Test-Path $LocalPortableHome)) {
+  $LocalPortableHome
+} else {
+  Join-Path $env:USERPROFILE ".hermes"
+}
 $ShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
 
 function Test-ProcessMatchesPath {

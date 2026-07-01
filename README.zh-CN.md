@@ -11,7 +11,10 @@ Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、
 - 打包 Hermes Agent、portable Python runtime、`uv`、Python 依赖和运行时资源。
 - 支持安装或升级 Hermes，并保留已有的 `config.yaml` 和 `.env`。
 - 提供 Windows 启动、停止、卸载辅助脚本和 PATH 命令。
+- 提供 Windows 修复入口 `repair.cmd`，可用当前解压包重建 runtime、venv 和 shims。
 - 支持通过 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 自定义安装位置。
+- 支持 `HERMES_PORTABLE_MODE=1` 或 `install.cmd -Portable` 的便携模式，runtime 和用户数据都留在解压目录内。
+- Hermes shim 会把常见第三方缓存默认收敛到 `$HERMES_HOME/cache`，避免 HuggingFace、Playwright、tiktoken、Torch 等默认写入系统盘。
 - 导出 Hermes runtime resources，包括内置 Agent Skills、optional skills catalog、optional MCP catalog、locales、bundled plugins、Dashboard `web_dist` 和 Dashboard TUI `tui_dist`。
 
 ## 产物
@@ -40,6 +43,21 @@ install.cmd
 ```cmd
 install_windows.cmd
 ```
+
+如需便携安装，不写入用户级环境变量或用户 `Path`，可运行：
+
+```cmd
+install.cmd -Portable
+```
+
+也可以使用环境变量：
+
+```cmd
+set HERMES_PORTABLE_MODE=1
+install.cmd
+```
+
+便携模式默认使用解压目录下的 `.hermes-offline` 作为 runtime 目录，`.hermes` 作为 Hermes 用户数据目录。安装完成后继续使用同一解压目录里的 `launch.cmd`、`shutdown.cmd` 和 `uninstall.cmd` 即可；这些脚本会自动识别本地便携安装。
 
 如需自定义安装位置，可先在 PowerShell 中设置环境变量，再运行安装脚本：
 
@@ -102,8 +120,16 @@ install_windows.cmd
 
 ```cmd
 launch.cmd
+repair.cmd
 shutdown.cmd
 uninstall.cmd
+```
+
+`repair.cmd` 会使用当前解压包内资源重建 runtime、venv 和 shims，默认不启动 Dashboard。需要修复后立即启动时可设置：
+
+```cmd
+set HERMES_REPAIR_START_DASHBOARD=1
+repair.cmd
 ```
 
 重新打开 PowerShell 或 CMD 后，也可以直接使用 PATH 命令：
@@ -146,6 +172,14 @@ HERMES_OFFLINE_HOME=/data/hermes-runtime \
 ./installers/install_unix.sh
 ```
 
+Unix 也支持便携模式：
+
+```bash
+HERMES_PORTABLE_MODE=1 ./installers/install_unix.sh
+```
+
+此时 runtime shim 写入 `$HERMES_OFFLINE_HOME/bin`，默认位置为解压目录下的 `.hermes-offline/bin/hermes`，Hermes 用户数据默认位于解压目录下的 `.hermes`。
+
 `HERMES_HOME` 控制 Hermes 配置、插件、skills、日志和状态文件位置。`HERMES_OFFLINE_HOME` 控制离线 runtime、venv 和 shim 位置。
 
 重新打开终端后验证：
@@ -166,6 +200,23 @@ python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelh
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
+如需构建中文社区 runtime fork 或桌面预打包 extra，可覆盖 `HERMES_SOURCE` 和 `--extras`：
+
+```bash
+HERMES_SOURCE="hermes-agent @ git+https://github.com/Eynzof/Hermes-CN-Core.git" \
+python3 packaging/build_wheelhouse.py \
+  --platform win-x64 \
+  --extras cn-desktop \
+  --output build/wheelhouse-cn
+
+python3 packaging/build_bundle.py \
+  --platform win-x64 \
+  --wheelhouse build/wheelhouse-cn \
+  --output dist
+```
+
+安装器会读取 wheelhouse 内的 `manifest.json`，按构建时记录的 extras 安装，例如 `hermes-agent[cn-desktop]`，不再固定写死为 `hermes-agent[all]`。
+
 支持的平台参数：
 
 ```text
@@ -176,6 +227,8 @@ mac-arm64
 ```
 
 `packaging/build_wheelhouse.py` 默认使用 `packaging/manifest.py` 中的 `HERMES_SOURCE`。GitHub Actions 手动运行时，可以通过 `hermes_source` 输入覆盖 Hermes package spec。
+
+wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`hermes_source_commit` 和 extras；最终 bundle 的 `manifest.json` 会继续带上这些字段，便于确认 zip 内实际 Hermes 版本。
 
 离线 wheelhouse 包含 `hermes dashboard` 所需依赖，包括 `fastapi`、`python-multipart`、`uvicorn` 和 `websockets`。构建器还会从 Hermes 源码导出 runtime resources：
 
@@ -194,8 +247,10 @@ mac-arm64
 - Runtime：`~/.hermes-offline/runtime` 或 `%USERPROFILE%\.hermes-offline\runtime`，可通过 `HERMES_OFFLINE_HOME` 覆盖。
 - Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins`、`web_dist` 和 `tui_dist`。
 - Shim：Unix 为 `~/.local/bin/hermes`；Windows 为 `%HERMES_OFFLINE_HOME%\bin\hermes.cmd`。
+- 便携模式：Windows 为 `<解压目录>\.hermes-offline\bin\hermes.cmd`，Unix 为 `<解压目录>/.hermes-offline/bin/hermes`。
 - Hermes 配置：`~/.hermes/config.yaml` 和 `~/.hermes/.env`；Windows 为 `%USERPROFILE%\.hermes\config.yaml` 和 `%USERPROFILE%\.hermes\.env`；可通过 `HERMES_HOME` 覆盖。
 - 用户插件、skills、日志和状态文件跟随 `HERMES_HOME`。
+- 常见第三方缓存默认随 Hermes shim 收敛到 `$HERMES_HOME/cache`，包括 `HF_HOME`、`HUGGINGFACE_HUB_CACHE`、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`MPLCONFIGDIR`、`NLTK_DATA`、`PLAYWRIGHT_BROWSERS_PATH` 和临时目录。
 - 内置 Agent Skills 会在安装或升级时从 runtime resources 恢复。用户修改或删除过的 skills 会按照 Hermes bundled manifest 规则保留。
 - Hermes Python：`HERMES_PYTHON` 从 `$HERMES_OFFLINE_HOME/runtime/venv` 派生；Unix shim 会导出上表 Hermes 环境变量，Windows 安装器会写入用户环境变量。
 
@@ -228,11 +283,14 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 
 ## 配置
 
-安装器只创建最小配置和环境变量模板，不写入用户 API keys。安装完成后编辑：
+安装器会把默认模型提供商配置为 `zhan_ai`，并从 Windows 用户环境变量读取模型服务配置：
 
-```text
-$HERMES_HOME/.env
+```powershell
+[Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
+[Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
+
+设置完成后重新打开 PowerShell / CMD，或重启 ClawPanel / Hermes gateway。`$HERMES_HOME/.env` 仍只保存安装包自身需要的非模型密钥配置，不写入 `ZHANCLAW_API_KEY`。
 
 ## 说明
 

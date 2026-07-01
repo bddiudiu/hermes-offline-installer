@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import stat
@@ -199,6 +200,13 @@ def validate_archive_hermes_resources(platform_name: str, archive: Path) -> None
         )
 
 
+def read_wheelhouse_manifest(wheelhouse: Path) -> dict[str, object]:
+    manifest = wheelhouse / "manifest.json"
+    if not manifest.is_file():
+        return {}
+    return json.loads(manifest.read_text(encoding="utf-8"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="构建 Hermes Agent 离线安装 bundle")
     parser.add_argument("--platform", required=True, choices=sorted(UV_TARGETS))
@@ -212,7 +220,9 @@ def main() -> None:
         shutil.rmtree(bundle)
     bundle.mkdir(parents=True)
 
-    copytree(args.wheelhouse.resolve(), bundle / "wheelhouse")
+    wheelhouse = args.wheelhouse.resolve()
+    wheelhouse_manifest = read_wheelhouse_manifest(wheelhouse)
+    copytree(wheelhouse, bundle / "wheelhouse")
     resources_in_wheelhouse = bundle / "wheelhouse" / "hermes-resources"
     validate_hermes_resources(resources_in_wheelhouse)
     shutil.move(str(resources_in_wheelhouse), str(bundle / "hermes-resources"))
@@ -228,13 +238,24 @@ def main() -> None:
         shutil.copy2(bundle / "installers" / "install_windows.cmd", bundle / "install_windows.cmd")
         shutil.copy2(bundle / "installers" / "install_windows.cmd", bundle / "install.cmd")
         shutil.copy2(bundle / "installers" / "launch_windows.cmd", bundle / "launch.cmd")
+        shutil.copy2(bundle / "installers" / "repair_windows.cmd", bundle / "repair.cmd")
         shutil.copy2(bundle / "installers" / "shutdown_windows.cmd", bundle / "shutdown.cmd")
         shutil.copy2(bundle / "installers" / "uninstall_windows.cmd", bundle / "uninstall.cmd")
 
     prepare_uv(args.platform, bundle)
     prepare_python_runtime(bundle)
     validate_python_runtime(args.platform, bundle)
-    write_manifest(bundle / "manifest.json", target_platform=args.platform, extra={"kind": "bundle"})
+    write_manifest(
+        bundle / "manifest.json",
+        target_platform=args.platform,
+        extra={
+            "kind": "bundle",
+            "wheelhouse": wheelhouse_manifest,
+            "hermes_version": wheelhouse_manifest.get("hermes_version"),
+            "hermes_extras": wheelhouse_manifest.get("extras"),
+            "hermes_source_commit": wheelhouse_manifest.get("hermes_source_commit"),
+        },
+    )
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)

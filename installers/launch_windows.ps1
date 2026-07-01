@@ -5,7 +5,17 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
+$BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+$LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
+$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+  $env:HERMES_OFFLINE_HOME
+} elseif (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd")) {
+  $LocalPortableRoot
+} else {
+  Join-Path $env:USERPROFILE ".hermes-offline"
+}
 $BinDir = Join-Path $InstallRoot "bin"
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $DashboardPort = if ($env:HERMES_DASHBOARD_PORT) { [int] $env:HERMES_DASHBOARD_PORT } else { 9119 }

@@ -7,6 +7,10 @@ on:
         description: "Hermes package spec"
         required: false
         default: "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git"
+      hermes_extras:
+        description: "Hermes extras to pre-bake into the offline wheelhouse"
+        required: false
+        default: "all"
   push:
     tags:
       - "v*"
@@ -49,7 +53,7 @@ jobs:
         shell: bash
         env:
           HERMES_SOURCE: ${{ github.event.inputs.hermes_source || 'hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git' }}
-        run: python packaging/build_wheelhouse.py --platform "${{ matrix.target }}" --output build/wheelhouse
+        run: python packaging/build_wheelhouse.py --platform "${{ matrix.target }}" --extras "${{ github.event.inputs.hermes_extras || 'all' }}" --output build/wheelhouse
 
       - name: Read Hermes Agent version
         shell: bash
