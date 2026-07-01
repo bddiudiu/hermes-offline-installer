@@ -23,8 +23,44 @@ function Test-TruthyEnv {
   return @("1", "true", "yes", "on") -contains $Value.Trim().ToLowerInvariant()
 }
 
+function ConvertTo-ComparablePath {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path) {
+    return $null
+  }
+
+  try {
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]]"\/")
+  } catch {
+    return $Path.TrimEnd([char[]]"\/")
+  }
+}
+
+function Test-SamePath {
+  param(
+    [AllowNull()] [string] $Left,
+    [AllowNull()] [string] $Right
+  )
+
+  $LeftPath = ConvertTo-ComparablePath -Path $Left
+  $RightPath = ConvertTo-ComparablePath -Path $Right
+  if (-not $LeftPath -or -not $RightPath) {
+    return $false
+  }
+  return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 $LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
-$PortableMode = (Test-TruthyEnv -Value $env:HERMES_PORTABLE_MODE) -or ((-not $env:HERMES_OFFLINE_HOME) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd")))
+$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
+  $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
+$PortableMode = (Test-TruthyEnv -Value $env:HERMES_PORTABLE_MODE) -or ((-not $CustomInstallRoot) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd")))
 
 $PreviousNoStart = $env:HERMES_NO_START_DASHBOARD
 if (-not (Test-TruthyEnv -Value $env:HERMES_REPAIR_START_DASHBOARD)) {

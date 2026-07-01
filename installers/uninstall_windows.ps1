@@ -6,30 +6,108 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
 $BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+
+function ConvertTo-ComparablePath {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path) {
+    return $null
+  }
+
+  try {
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]]"\/")
+  } catch {
+    return $Path.TrimEnd([char[]]"\/")
+  }
+}
+
+function Test-SamePath {
+  param(
+    [AllowNull()] [string] $Left,
+    [AllowNull()] [string] $Right
+  )
+
+  $LeftPath = ConvertTo-ComparablePath -Path $Left
+  $RightPath = ConvertTo-ComparablePath -Path $Right
+  if (-not $LeftPath -or -not $RightPath) {
+    return $false
+  }
+  return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-PathUnderRoot {
+  param(
+    [AllowNull()] [string] $Path,
+    [AllowNull()] [string] $Root
+  )
+
+  $ComparablePath = ConvertTo-ComparablePath -Path $Path
+  $ComparableRoot = ConvertTo-ComparablePath -Path $Root
+  if (-not $ComparablePath -or -not $ComparableRoot) {
+    return $false
+  }
+  return (
+    $ComparablePath.Equals($ComparableRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $ComparablePath.StartsWith($ComparableRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)
+  )
+}
+
+function Get-WindowsDefaultHermesHome {
+  $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+  return (Join-Path $ProgramDataRoot "SSC\ZhanClaw\Hermes")
+}
+
+function Get-WindowsDefaultHermesOfflineHome {
+  $ProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+  return (Join-Path $ProgramFilesRoot "StarSoftComm\ZhanClaw\Hermes")
+}
+
+function Test-IsAdministrator {
+  $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $Principal = [System.Security.Principal.WindowsPrincipal]::new($Identity)
+  return $Principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 $LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
 $LocalPortableHome = Join-Path $BundleDirPath ".hermes"
-$PortableMode = (-not $env:HERMES_OFFLINE_HOME) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+$DefaultProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
+$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
+$LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
   $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
+$CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
+  $env:HERMES_HOME
+} else {
+  $null
+}
+$PortableMode = (-not $CustomInstallRoot) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
+$InstallRoot = if ($CustomInstallRoot) {
+  $CustomInstallRoot
 } elseif ($PortableMode) {
   $LocalPortableRoot
 } else {
-  Join-Path $env:USERPROFILE ".hermes-offline"
+  Get-WindowsDefaultHermesOfflineHome
 }
 $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
-$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
+$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"), $LegacyOfflineBinDir)
 if ($env:APPDATA) {
   $LegacyShimDirs += (Join-Path $env:APPDATA "uv\tools\bin")
   $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
 }
 $LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$HermesHome = if ($env:HERMES_HOME) {
-  $env:HERMES_HOME
+$HermesHome = if ($CustomHermesHome) {
+  $CustomHermesHome
 } elseif ($PortableMode -and (Test-Path $LocalPortableHome)) {
   $LocalPortableHome
 } else {
-  Join-Path $env:USERPROFILE ".hermes"
+  Get-WindowsDefaultHermesHome
 }
 $CompatVenvDir = Join-Path $env:USERPROFILE ".hermes-venv"
 $ShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
@@ -255,23 +333,23 @@ function Remove-InstallRootFromUserPath {
     return
   }
 
-  $BinDirFull = [System.IO.Path]::GetFullPath($BinDir).TrimEnd('\')
+  $BinDirFull = ConvertTo-ComparablePath -Path $BinDir
   $PathParts = @()
   foreach ($Part in ($UserPath -split ";")) {
     if (-not $Part) {
       continue
     }
-    $PartFull = $Part
-    try {
-      $PartFull = [System.IO.Path]::GetFullPath($Part).TrimEnd('\')
-    } catch {
-    }
+    $PartFull = ConvertTo-ComparablePath -Path $Part
     if (-not $PartFull.Equals($BinDirFull, [System.StringComparison]::OrdinalIgnoreCase)) {
       $PathParts += $Part
     }
   }
 
   [Environment]::SetEnvironmentVariable("Path", ($PathParts | Select-Object -Unique) -join ";", "User")
+}
+
+if (-not $PortableMode -and (Test-PathUnderRoot -Path $InstallRoot -Root $DefaultProgramFilesRoot) -and -not (Test-IsAdministrator)) {
+  throw "Windows default installation is stored under $InstallRoot and requires administrator rights to uninstall. Please right-click uninstall.cmd and choose Run as administrator."
 }
 
 Stop-HermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ShimDirs
@@ -287,6 +365,7 @@ if ($env:HERMES_UNINSTALL_REMOVE_HOME -eq "1") {
 if (-not $PortableMode) {
   Remove-UserEnvironment
   Remove-InstallRootFromUserPath -BinDir $BinDir
+  Remove-InstallRootFromUserPath -BinDir $LegacyOfflineBinDir
 }
 
 Write-Host "Hermes Agent uninstalled."

@@ -3,22 +3,76 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BundleDir = (Resolve-Path (Join-Path $ScriptDir "..") -ErrorAction SilentlyContinue)
 $BundleDirPath = if ($BundleDir) { $BundleDir.Path } else { $ScriptDir }
+
+function ConvertTo-ComparablePath {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path) {
+    return $null
+  }
+
+  try {
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]]"\/")
+  } catch {
+    return $Path.TrimEnd([char[]]"\/")
+  }
+}
+
+function Test-SamePath {
+  param(
+    [AllowNull()] [string] $Left,
+    [AllowNull()] [string] $Right
+  )
+
+  $LeftPath = ConvertTo-ComparablePath -Path $Left
+  $RightPath = ConvertTo-ComparablePath -Path $Right
+  if (-not $LeftPath -or -not $RightPath) {
+    return $false
+  }
+  return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-WindowsDefaultHermesHome {
+  $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+  return (Join-Path $ProgramDataRoot "SSC\ZhanClaw\Hermes")
+}
+
+function Get-WindowsDefaultHermesOfflineHome {
+  $ProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+  return (Join-Path $ProgramFilesRoot "StarSoftComm\ZhanClaw\Hermes")
+}
+
 $LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
 $LocalPortableHome = Join-Path $BundleDirPath ".hermes"
-$PortableMode = (-not $env:HERMES_OFFLINE_HOME) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
+$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
+$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
+$LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
   $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
+$CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
+  $env:HERMES_HOME
+} else {
+  $null
+}
+$PortableMode = (-not $CustomInstallRoot) -and (Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd"))
+$InstallRoot = if ($CustomInstallRoot) {
+  $CustomInstallRoot
 } elseif ($PortableMode) {
   $LocalPortableRoot
 } else {
-  Join-Path $env:USERPROFILE ".hermes-offline"
+  Get-WindowsDefaultHermesOfflineHome
 }
-$HermesHome = if ($env:HERMES_HOME) {
-  $env:HERMES_HOME
+$HermesHome = if ($CustomHermesHome) {
+  $CustomHermesHome
 } elseif ($PortableMode -and (Test-Path $LocalPortableHome)) {
   $LocalPortableHome
 } else {
-  Join-Path $env:USERPROFILE ".hermes"
+  Get-WindowsDefaultHermesHome
 }
 $BinDir = Join-Path $InstallRoot "bin"
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
@@ -26,7 +80,7 @@ $ResourcesDir = Join-Path $InstallRoot "runtime\hermes-resources"
 $Config = Join-Path $HermesHome "config.yaml"
 $EnvFile = Join-Path $HermesHome ".env"
 $SkillsDir = Join-Path $HermesHome "skills"
-$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
+$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"), $LegacyOfflineBinDir)
 if ($env:APPDATA) {
   $LegacyShimDirs += (Join-Path $env:APPDATA "uv\tools\bin")
   $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")

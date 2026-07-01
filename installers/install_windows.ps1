@@ -23,30 +23,127 @@ function Test-TruthyEnv {
   return @("1", "true", "yes", "on") -contains $Value.Trim().ToLowerInvariant()
 }
 
+function ConvertTo-ComparablePath {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path) {
+    return $null
+  }
+
+  try {
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]]"\/")
+  } catch {
+    return $Path.TrimEnd([char[]]"\/")
+  }
+}
+
+function Test-SamePath {
+  param(
+    [AllowNull()] [string] $Left,
+    [AllowNull()] [string] $Right
+  )
+
+  $LeftPath = ConvertTo-ComparablePath -Path $Left
+  $RightPath = ConvertTo-ComparablePath -Path $Right
+  if (-not $LeftPath -or -not $RightPath) {
+    return $false
+  }
+  return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-PathUnderRoot {
+  param(
+    [AllowNull()] [string] $Path,
+    [AllowNull()] [string] $Root
+  )
+
+  $ComparablePath = ConvertTo-ComparablePath -Path $Path
+  $ComparableRoot = ConvertTo-ComparablePath -Path $Root
+  if (-not $ComparablePath -or -not $ComparableRoot) {
+    return $false
+  }
+  return (
+    $ComparablePath.Equals($ComparableRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $ComparablePath.StartsWith($ComparableRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)
+  )
+}
+
+function Get-WindowsDefaultHermesHome {
+  $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+  return (Join-Path $ProgramDataRoot "SSC\ZhanClaw\Hermes")
+}
+
+function Get-WindowsDefaultHermesOfflineHome {
+  $ProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+  return (Join-Path $ProgramFilesRoot "StarSoftComm\ZhanClaw\Hermes")
+}
+
+function Test-IsAdministrator {
+  $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $Principal = [System.Security.Principal.WindowsPrincipal]::new($Identity)
+  return $Principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Grant-HermesHomeAccess {
+  param(
+    [string] $Path
+  )
+
+  if (-not (Get-Command icacls.exe -ErrorAction SilentlyContinue)) {
+    Write-Warning "icacls.exe was not found; could not grant standard Users modify access to $Path."
+    return
+  }
+
+  & icacls.exe $Path /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not grant standard Users modify access to $Path. Hermes may need administrator rights to write config, logs, or caches."
+  }
+}
+
+$DefaultHermesHome = Get-WindowsDefaultHermesHome
+$DefaultInstallRoot = Get-WindowsDefaultHermesOfflineHome
+$DefaultProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
+$DefaultProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
+$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
+$LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
+  $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
+$CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
+  $env:HERMES_HOME
+} else {
+  $null
+}
+
 $LocalPortableRoot = Join-Path $BundleDir ".hermes-offline"
 $ExistingPortableInstall = Test-Path (Join-Path $LocalPortableRoot "bin\hermes.cmd")
-$PortableMode = [bool] $Portable -or (Test-TruthyEnv -Value $env:HERMES_PORTABLE_MODE) -or ((-not $env:HERMES_OFFLINE_HOME) -and $ExistingPortableInstall)
-$InstallRoot = if ($env:HERMES_OFFLINE_HOME) {
-  $env:HERMES_OFFLINE_HOME
+$PortableMode = [bool] $Portable -or (Test-TruthyEnv -Value $env:HERMES_PORTABLE_MODE) -or ((-not $CustomInstallRoot) -and $ExistingPortableInstall)
+$InstallRoot = if ($CustomInstallRoot) {
+  $CustomInstallRoot
 } elseif ($PortableMode) {
   $LocalPortableRoot
 } else {
-  Join-Path $env:USERPROFILE ".hermes-offline"
+  $DefaultInstallRoot
 }
 $RuntimeDir = Join-Path $InstallRoot "runtime"
 $BinDir = Join-Path $InstallRoot "bin"
-$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"))
+$LegacyShimDirs = @((Join-Path $env:USERPROFILE ".local\bin"), $LegacyOfflineBinDir)
 if ($env:APPDATA) {
   $LegacyShimDirs += (Join-Path $env:APPDATA "uv\tools\bin")
   $LegacyShimDirs += (Join-Path $env:APPDATA "clawpanel\bin")
 }
 $LegacyShimDirs = $LegacyShimDirs | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$HermesHome = if ($env:HERMES_HOME) {
-  $env:HERMES_HOME
+$HermesHome = if ($CustomHermesHome) {
+  $CustomHermesHome
 } elseif ($PortableMode) {
   Join-Path $BundleDir ".hermes"
 } else {
-  Join-Path $env:USERPROFILE ".hermes"
+  $DefaultHermesHome
 }
 $VenvDir = Join-Path $RuntimeDir "venv"
 $RuntimeWheelhouse = Join-Path $RuntimeDir "wheelhouse"
@@ -331,6 +428,44 @@ function Remove-HermesShimFiles {
   }
 }
 
+function Remove-UserPathEntries {
+  param(
+    [string[]] $Paths
+  )
+
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (-not $UserPath) {
+    return
+  }
+
+  $ComparablePaths = @($Paths | Where-Object { $_ } | ForEach-Object {
+    ConvertTo-ComparablePath -Path $_
+  } | Where-Object { $_ } | Select-Object -Unique)
+  if ($ComparablePaths.Count -eq 0) {
+    return
+  }
+
+  $PathParts = @()
+  foreach ($Part in ($UserPath -split ";")) {
+    if (-not $Part) {
+      continue
+    }
+    $ComparablePart = ConvertTo-ComparablePath -Path $Part
+    $ShouldRemove = $false
+    foreach ($ComparablePath in $ComparablePaths) {
+      if ($ComparablePart -and $ComparablePart.Equals($ComparablePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $ShouldRemove = $true
+        break
+      }
+    }
+    if (-not $ShouldRemove) {
+      $PathParts += $Part
+    }
+  }
+
+  [Environment]::SetEnvironmentVariable("Path", ($PathParts | Select-Object -Unique) -join ";", "User")
+}
+
 function Remove-HermesExeShim {
   param(
     [string] $ShimDir
@@ -548,6 +683,15 @@ function Sync-BundledSkills {
 
 $ShimDirs = @($BinDir)
 $ProcessShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
+if ($env:HERMES_OFFLINE_HOME -and -not $CustomInstallRoot) {
+  Write-Host "Ignoring legacy HERMES_OFFLINE_HOME=$env:HERMES_OFFLINE_HOME; using $InstallRoot."
+}
+if ($env:HERMES_HOME -and -not $CustomHermesHome) {
+  Write-Host "Ignoring legacy HERMES_HOME=$env:HERMES_HOME; using $HermesHome."
+}
+if (-not $PortableMode -and (Test-PathUnderRoot -Path $InstallRoot -Root $DefaultProgramFilesRoot) -and -not (Test-IsAdministrator)) {
+  throw "Windows default installation writes to $InstallRoot and requires administrator rights. Please right-click install.cmd and choose Run as administrator, or run install.cmd -Portable to keep files in the extracted folder."
+}
 $IsUpgrade = (Test-Path $VenvDir) -or (Test-Path $RuntimeBundle) -or (Test-Path $ExistingHermesCmd)
 if ($IsUpgrade) {
   Write-Host "Existing Hermes offline installation detected. Running upgrade."
@@ -556,9 +700,15 @@ if ($IsUpgrade) {
 }
 if ($PortableMode) {
   Write-Host "Portable mode enabled. Runtime and Hermes home will stay inside: $BundleDir"
+} else {
+  Write-Host "Windows install root: $InstallRoot"
+  Write-Host "Windows Hermes home: $HermesHome"
 }
 $InstallDirs = @($RuntimeDir, $HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
+if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
+  Grant-HermesHomeAccess -Path $HermesHome
+}
 
 $Wheelhouse = Join-Path $BundleDir "wheelhouse"
 if (-not (Test-Path $Wheelhouse)) {
@@ -795,6 +945,7 @@ if (-not (Test-Path $EnvPath)) {
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
 
 if (-not $PortableMode) {
+  Remove-UserPathEntries -Paths @($LegacyOfflineBinDir)
   $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (($UserPath -split ";") -notcontains $BinDir) {
     $PathParts = @()
