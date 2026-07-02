@@ -1,5 +1,11 @@
 model:
   default: gpt-4o-mini
+  provider: custom:zhan_ai
+
+providers:
+  zhan_ai:
+    api: "${ZHANCLAW_BASE_URL}"
+    key_env: ZHANCLAW_API_KEY
 
 api_server_port: 8642
 

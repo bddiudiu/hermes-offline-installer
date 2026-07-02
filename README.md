@@ -4,14 +4,17 @@
 
 Hermes Offline Installer packages Hermes Agent with a portable Python runtime, `uv`, offline Python wheels, dashboard assets, skills, plugins, locales, and installer scripts, so Hermes can be installed without requiring end users to install Python, `uv`, or Git.
 
-项目目标是在 Windows、macOS 和 Linux 上生成可分发的一键离线安装包。安装阶段只使用包内资源，不依赖 GitHub 或 PyPI 网络访问。
+The project builds redistributable one-click offline installers for Windows, macOS, and Linux. The install phase uses only bundled resources and does not require GitHub or PyPI network access.
 
 ## Features
 
 - Bundles Hermes Agent, portable Python runtime, `uv`, Python dependencies, and runtime resources.
-- Installs or upgrades Hermes without overwriting existing `config.yaml` and `.env`.
+- Installs or upgrades Hermes, preserving `.env` and ensuring `config.yaml` defaults to the `zhan_ai` model provider without overwriting unrelated settings.
 - Provides Windows launch, shutdown, uninstall helpers and PATH commands.
+- Provides a Windows `repair.cmd` helper that rebuilds the runtime, venv, and shims from the extracted bundle.
 - Supports configurable install locations through `HERMES_HOME` and `HERMES_OFFLINE_HOME`.
+- Supports portable mode through `HERMES_PORTABLE_MODE=1` or `install.cmd -Portable`, keeping runtime and user data inside the extracted directory.
+- Hermes shims default common third-party caches to `$HERMES_HOME/cache`, avoiding surprise writes to the system drive from HuggingFace, Playwright, tiktoken, Torch, and similar libraries.
 - Exports Hermes runtime resources, including bundled Agent Skills, optional skills catalog, optional MCP catalog, locales, bundled plugins, Dashboard `web_dist`, and Dashboard TUI `tui_dist`.
 
 ## Artifacts
@@ -41,6 +44,23 @@ The compatibility entry remains available:
 install_windows.cmd
 ```
 
+For a portable install that does not write user-level environment variables or the user `Path`, run:
+
+```cmd
+install.cmd -Portable
+```
+
+Or use the environment variable form:
+
+```cmd
+set HERMES_PORTABLE_MODE=1
+install.cmd
+```
+
+The default Windows install uses fixed product directories: Hermes config, skills, logs, and caches live under `C:\ProgramData\SSC\ZhanClaw\Hermes`, and the offline runtime lives under `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`. Default mode no longer creates `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline`. Because the runtime is under `Program Files`, default install and uninstall require administrator rights; `install.cmd` and `uninstall.cmd` automatically request UAC elevation when needed.
+
+Portable mode defaults to `.hermes-offline` for the runtime and `.hermes` for Hermes user data inside the extracted directory. After installation, keep using `launch.cmd`, `shutdown.cmd`, and `uninstall.cmd` from that same directory; the scripts automatically detect the local portable install.
+
 To customize install locations, set environment variables in PowerShell before running the installer:
 
 ```powershell
@@ -49,7 +69,7 @@ $env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
-The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, derives the full Hermes user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`, and creates shims only in `%HERMES_OFFLINE_HOME%\bin`. It starts Dashboard silently after installation by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
+The Windows installer stops running Hermes processes when possible, refreshes the offline runtime, derives the full Hermes user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`, and creates shims only in `%HERMES_OFFLINE_HOME%\bin`. It grants standard Users modify access to `C:\ProgramData\SSC\ZhanClaw\Hermes` so non-admin Dashboard runs can write config, logs, and caches. It starts Dashboard silently after installation by default, and it does not open a Dashboard browser page. Reopen PowerShell or CMD after installation for the updated environment variables to take effect.
 
 The installer also sets `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, and the Hermes shim switches to the UTF-8 code page. This avoids encoding issues when agent tools write files or parse terminal output on Chinese Windows environments.
 
@@ -57,8 +77,8 @@ Complete installer environment variable list:
 
 | Variable | Source |
 | --- | --- |
-| `HERMES_HOME` | User-provided value; defaults to `%USERPROFILE%\.hermes` on Windows and `$HOME/.hermes` on Unix |
-| `HERMES_OFFLINE_HOME` | User-provided value; defaults to `%USERPROFILE%\.hermes-offline` on Windows and `$HOME/.hermes-offline` on Unix |
+| `HERMES_HOME` | User-provided value; defaults to `C:\ProgramData\SSC\ZhanClaw\Hermes` on Windows and `$HOME/.hermes` on Unix |
+| `HERMES_OFFLINE_HOME` | User-provided value; defaults to `C:\Program Files\StarSoftComm\ZhanClaw\Hermes` on Windows and `$HOME/.hermes-offline` on Unix |
 | `HERMES_PYTHON` | `$HERMES_OFFLINE_HOME/runtime/venv/Scripts/python.exe` on Windows or `$HERMES_OFFLINE_HOME/runtime/venv/bin/python` on Unix |
 | `HERMES_BUNDLED_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/skills` |
 | `HERMES_OPTIONAL_SKILLS` | `$HERMES_OFFLINE_HOME/runtime/hermes-resources/optional-skills` |
@@ -70,9 +90,9 @@ Complete installer environment variable list:
 | `PYTHONUTF8` | `1` in the Windows user environment and shim |
 | `PYTHONIOENCODING` | `utf-8` in the Windows user environment and shim |
 
-End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when `HERMES_HOME` and `HERMES_OFFLINE_HOME` point outside the user profile, it does not additionally create `%USERPROFILE%\.local\bin`, `%USERPROFILE%\.hermes-venv`, `%APPDATA%\uv\tools\bin`, or `%APPDATA%\clawpanel\bin`. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
+End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when it detects old `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline` defaults, it treats them as legacy values, migrates to the new SSC/ZhanClaw directories, and removes the old `%USERPROFILE%\.hermes-offline\bin` PATH entry. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
 
-To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, and preserves existing `config.yaml` and `.env`.
+To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, preserves `.env`, and only patches the default model provider plus the `zhan_ai` provider block in `config.yaml`.
 
 If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into `%HERMES_OFFLINE_HOME%\bin` for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
 
@@ -102,8 +122,16 @@ After installation, use the bundled helpers:
 
 ```cmd
 launch.cmd
+repair.cmd
 shutdown.cmd
 uninstall.cmd
+```
+
+`repair.cmd` rebuilds the runtime, venv, and shims using the current extracted bundle. It skips Dashboard startup by default. To repair and start Dashboard immediately:
+
+```cmd
+set HERMES_REPAIR_START_DASHBOARD=1
+repair.cmd
 ```
 
 After reopening PowerShell or CMD, the PATH commands are also available:
@@ -146,6 +174,14 @@ HERMES_OFFLINE_HOME=/data/hermes-runtime \
 ./installers/install_unix.sh
 ```
 
+Unix also supports portable mode:
+
+```bash
+HERMES_PORTABLE_MODE=1 ./installers/install_unix.sh
+```
+
+In portable mode, the shim is written under `$HERMES_OFFLINE_HOME/bin`, defaulting to `.hermes-offline/bin/hermes` inside the extracted directory, and Hermes user data defaults to `.hermes` inside the extracted directory.
+
 `HERMES_HOME` controls Hermes configuration, plugins, skills, logs, and state. `HERMES_OFFLINE_HOME` controls the offline runtime, venv, and shim location.
 
 Reopen the terminal and verify:
@@ -166,6 +202,23 @@ python3 packaging/build_wheelhouse.py --platform linux-x64 --output build/wheelh
 python3 packaging/build_bundle.py --platform linux-x64 --wheelhouse build/wheelhouse --output dist
 ```
 
+To build a Chinese community runtime fork or a desktop-prebaked extra set, override `HERMES_SOURCE` and `--extras`:
+
+```bash
+HERMES_SOURCE="hermes-agent @ git+https://github.com/Eynzof/Hermes-CN-Core.git" \
+python3 packaging/build_wheelhouse.py \
+  --platform win-x64 \
+  --extras cn-desktop \
+  --output build/wheelhouse-cn
+
+python3 packaging/build_bundle.py \
+  --platform win-x64 \
+  --wheelhouse build/wheelhouse-cn \
+  --output dist
+```
+
+The installer reads `wheelhouse/manifest.json` and installs the extras recorded at build time, for example `hermes-agent[cn-desktop]`, instead of hard-coding `hermes-agent[all]`.
+
 Supported platform values:
 
 ```text
@@ -176,6 +229,8 @@ mac-arm64
 ```
 
 `packaging/build_wheelhouse.py` uses `HERMES_SOURCE` from `packaging/manifest.py` by default. For GitHub Actions manual runs, the `hermes_source` input can override the Hermes package spec.
+
+The wheelhouse manifest records the actual `hermes_version`, `hermes_install_spec`, `hermes_source_commit`, and extras. The final bundle `manifest.json` carries these fields forward so a zip can be inspected for its real Hermes version.
 
 The offline wheelhouse includes dependencies needed by `hermes dashboard`, including `fastapi`, `python-multipart`, `uvicorn`, and `websockets`. The builder also exports runtime resources from Hermes source:
 
@@ -191,19 +246,21 @@ Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resource
 
 ## Install Layout
 
-- Runtime: `~/.hermes-offline/runtime` or `%USERPROFILE%\.hermes-offline\runtime`; override with `HERMES_OFFLINE_HOME`.
+- Runtime: `C:\Program Files\StarSoftComm\ZhanClaw\Hermes\runtime` on Windows or `~/.hermes-offline/runtime` on Unix; override with `HERMES_OFFLINE_HOME`.
 - Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, `web_dist`, and `tui_dist`.
 - Shim: `~/.local/bin/hermes` on Unix; `%HERMES_OFFLINE_HOME%\bin\hermes.cmd` on Windows.
-- Hermes config: `~/.hermes/config.yaml` and `~/.hermes/.env`; on Windows, `%USERPROFILE%\.hermes\config.yaml` and `%USERPROFILE%\.hermes\.env`; override with `HERMES_HOME`.
+- Portable mode shim: `<extracted-dir>\.hermes-offline\bin\hermes.cmd` on Windows; `<extracted-dir>/.hermes-offline/bin/hermes` on Unix.
+- Hermes config: `C:\ProgramData\SSC\ZhanClaw\Hermes\config.yaml` and `C:\ProgramData\SSC\ZhanClaw\Hermes\.env` on Windows, or `~/.hermes/config.yaml` and `~/.hermes/.env` on Unix; override with `HERMES_HOME`.
 - User plugins, skills, logs, and state follow `HERMES_HOME`.
+- Common third-party caches default to `$HERMES_HOME/cache` through the Hermes shims, including `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TORCH_HOME`, `TIKTOKEN_CACHE_DIR`, `MPLCONFIGDIR`, `NLTK_DATA`, `PLAYWRIGHT_BROWSERS_PATH`, and temp directories.
 - Bundled Agent Skills are restored from runtime resources during install or upgrade. User-modified or deleted skills are preserved according to the Hermes bundled manifest rules.
 - Hermes Python: `HERMES_PYTHON` is derived from `$HERMES_OFFLINE_HOME/runtime/venv`; Unix shims export the Hermes environment variables listed above, and the Windows installer writes them to the user environment.
 
 If Windows reports that the Hermes Python interpreter cannot be found when checking optional dependencies, rebuild the full user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`:
 
 ```powershell
-$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
-$HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { Join-Path $env:USERPROFILE ".hermes-offline" }
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "C:\ProgramData\SSC\ZhanClaw\Hermes" }
+$HermesOfflineHome = if ($env:HERMES_OFFLINE_HOME) { $env:HERMES_OFFLINE_HOME } else { "C:\Program Files\StarSoftComm\ZhanClaw\Hermes" }
 $HermesResources = Join-Path $HermesOfflineHome "runtime\hermes-resources"
 $HermesEnv = [ordered]@{
   "HERMES_HOME" = $HermesHome
@@ -228,11 +285,14 @@ Then reopen PowerShell or CMD.
 
 ## Configuration
 
-The installer creates only minimal config and environment templates. It does not write user API keys. After installation, edit:
+The installer configures the default model provider as `zhan_ai`. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai` and `providers.zhan_ai` is present. Model service settings are read from Windows user environment variables:
 
-```text
-$HERMES_HOME/.env
+```powershell
+[Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
+[Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
+
+After setting them, reopen PowerShell / CMD or restart ClawPanel / Hermes gateway. `$HERMES_HOME/.env` remains for non-model installer settings and does not store `ZHANCLAW_API_KEY`.
 
 ## Notes
 

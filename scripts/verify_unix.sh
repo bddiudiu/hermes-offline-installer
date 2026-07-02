@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HERMES_BIN="${HOME}/.local/bin/hermes"
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-HERMES_OFFLINE_HOME="${HERMES_OFFLINE_HOME:-$HOME/.hermes-offline}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOCAL_PORTABLE_ROOT="$BUNDLE_DIR/.hermes-offline"
+if [ -n "${HERMES_OFFLINE_HOME:-}" ]; then
+  HERMES_OFFLINE_HOME="$HERMES_OFFLINE_HOME"
+elif [ "${HERMES_PORTABLE_MODE:-}" = "1" ] || [ -x "$LOCAL_PORTABLE_ROOT/bin/hermes" ]; then
+  HERMES_OFFLINE_HOME="$LOCAL_PORTABLE_ROOT"
+else
+  HERMES_OFFLINE_HOME="$HOME/.hermes-offline"
+fi
+if [ "$HERMES_OFFLINE_HOME" = "$LOCAL_PORTABLE_ROOT" ]; then
+  HERMES_BIN="$HERMES_OFFLINE_HOME/bin/hermes"
+  HERMES_HOME="${HERMES_HOME:-$BUNDLE_DIR/.hermes}"
+else
+  HERMES_BIN="${HOME}/.local/bin/hermes"
+  HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+fi
 CONFIG="${HERMES_HOME}/config.yaml"
 ENV_FILE="${HERMES_HOME}/.env"
 SKILLS_DIR="${HERMES_HOME}/skills"
