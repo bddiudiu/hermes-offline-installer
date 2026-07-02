@@ -285,14 +285,14 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 
 ## 配置
 
-安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`。模型服务配置从 Windows 用户环境变量读取：
+安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`；当实时模型发现不可用时，`qwen3` 会作为兜底模型显示。模型服务配置从 Windows 用户环境变量读取：
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
 [Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
 
-设置完成后重新打开 PowerShell / CMD，或重启 ClawPanel / Hermes gateway。`$HERMES_HOME/.env` 仍只保存安装包自身需要的非模型密钥配置，不写入 `ZHANCLAW_API_KEY`。
+设置完成后重启已经在运行的 ClawPanel / Hermes gateway。新的 Windows shim 启动时也会从当前用户环境刷新 `ZHANCLAW_BASE_URL` 和 `ZHANCLAW_API_KEY`。`$HERMES_HOME/.env` 仍只保存安装包自身需要的非模型密钥配置，不写入 `ZHANCLAW_API_KEY`。
 
 ## 说明
 

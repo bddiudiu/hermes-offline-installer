@@ -6,6 +6,8 @@ providers:
   zhan_ai:
     api: "${ZHANCLAW_BASE_URL}"
     key_env: ZHANCLAW_API_KEY
+    models:
+      - qwen3
 
 platform_toolsets:
   api_server:

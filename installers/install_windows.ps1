@@ -929,6 +929,8 @@ function Ensure-ZhanAiProviderBlock {
     [void] $Lines.Add("  zhan_ai:")
     [void] $Lines.Add('    api: "${ZHANCLAW_BASE_URL}"')
     [void] $Lines.Add("    key_env: ZHANCLAW_API_KEY")
+    [void] $Lines.Add("    models:")
+    [void] $Lines.Add("      - qwen3")
     return
   }
 
@@ -942,6 +944,8 @@ function Ensure-ZhanAiProviderBlock {
   }
 
   if ($ZhanIndex -lt 0) {
+    $Lines.Insert($ProvidersIndex + 1, "      - qwen3")
+    $Lines.Insert($ProvidersIndex + 1, "    models:")
     $Lines.Insert($ProvidersIndex + 1, "    key_env: ZHANCLAW_API_KEY")
     $Lines.Insert($ProvidersIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
     $Lines.Insert($ProvidersIndex + 1, "  zhan_ai:")
@@ -978,6 +982,52 @@ function Ensure-ZhanAiProviderBlock {
     $Lines[$KeyEnvIndex] = "    key_env: ZHANCLAW_API_KEY"
   } else {
     $Lines.Insert($ZhanIndex + 2, "    key_env: ZHANCLAW_API_KEY")
+    $ZhanEnd++
+  }
+
+  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
+  $ModelsIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+models\s*:') {
+      $ModelsIndex = $Index
+      break
+    }
+  }
+  if ($ModelsIndex -lt 0) {
+    $ModelInsertIndex = $ZhanEnd
+    for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+      if ($Lines[$Index] -match '^\s+key_env\s*:') {
+        $ModelInsertIndex = $Index + 1
+        break
+      }
+      if ($Lines[$Index] -match '^\s+api\s*:') {
+        $ModelInsertIndex = $Index + 1
+      }
+    }
+    $Lines.Insert($ModelInsertIndex, "      - qwen3")
+    $Lines.Insert($ModelInsertIndex, "    models:")
+  } elseif ($Lines[$ModelsIndex] -match '^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$') {
+    if ($Matches[2] -notmatch '(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)') {
+      $InlineModels = $Matches[2].Trim()
+      $InlineComment = if ($Matches[3]) { $Matches[3] } else { "" }
+      if ($InlineModels) {
+        $Lines[$ModelsIndex] = "$($Matches[1])[$InlineModels, qwen3]$InlineComment"
+      } else {
+        $Lines[$ModelsIndex] = "$($Matches[1])[qwen3]$InlineComment"
+      }
+    }
+  } elseif ($Lines[$ModelsIndex] -match '^\s+models\s*:\s*$') {
+    $ModelsEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ModelsIndex -Indent 4
+    $HasQwen3Model = $false
+    for ($Index = $ModelsIndex + 1; $Index -lt $ModelsEnd; $Index++) {
+      if ($Lines[$Index] -match '^\s+(?:-\s*)?[''"]?qwen3[''"]?\s*(?::|#.*)?$') {
+        $HasQwen3Model = $true
+        break
+      }
+    }
+    if (-not $HasQwen3Model) {
+      $Lines.Insert($ModelsIndex + 1, "      - qwen3")
+    }
   }
 }
 
@@ -1346,35 +1396,39 @@ $HermesShimEnvironmentLines = @($HermesInstallerEnvironment.GetEnumerator() | Fo
 $HermesShimDefaultEnvironmentLines = @($HermesDefaultEnvironment.GetEnumerator() | ForEach-Object {
   'if not defined {0} set "{0}={1}"' -f $_.Key, $_.Value
 })
+$HermesShimUserEnvironmentLines = @(
+  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
+  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
+)
 $ShimLines = @(
   "@echo off",
   "chcp 65001 >nul"
-) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + @(
+) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + $HermesShimUserEnvironmentLines + @(
   ('"{0}" %*' -f $HermesExe)
 )
 $DashboardShimLines = @(
   "@echo off",
   "title Hermes Agent Dashboard",
   "chcp 65001 >nul"
-) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + @(
+) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + $HermesShimUserEnvironmentLines + @(
   ('"{0}" dashboard --no-open %*' -f $HermesExe)
 )
 $LaunchShimLines = @(
   "@echo off",
   "chcp 65001 >nul"
-) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + @(
+) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + $HermesShimUserEnvironmentLines + @(
   ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "launch_windows.ps1"))
 )
 $ShutdownShimLines = @(
   "@echo off",
   "chcp 65001 >nul"
-) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + @(
+) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + $HermesShimUserEnvironmentLines + @(
   ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "shutdown_windows.ps1"))
 )
 $UninstallShimLines = @(
   "@echo off",
   "chcp 65001 >nul"
-) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + @(
+) + $HermesShimEnvironmentLines + $HermesShimDefaultEnvironmentLines + $HermesShimUserEnvironmentLines + @(
   ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" %*' -f (Join-Path $RuntimeCommands "uninstall_windows.ps1"))
 )
 $ExeShimTemplate = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.exe" -f ([System.Guid]::NewGuid().ToString("N")))

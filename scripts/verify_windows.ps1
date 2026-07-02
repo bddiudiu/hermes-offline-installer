@@ -97,6 +97,7 @@ $ConfigText = Get-Content -Raw -Path $Config
 if ($ConfigText -notmatch '(?m)^\s+default\s*:\s*qwen3\s*(#.*)?$') { throw "config.yaml 未默认选择 qwen3 模型" }
 if ($ConfigText -notmatch 'provider:\s*custom:zhan_ai') { throw "config.yaml 未默认选择 zhan_ai 渠道" }
 if ($ConfigText -notmatch 'zhan_ai:' -or $ConfigText -notmatch 'ZHANCLAW_BASE_URL' -or $ConfigText -notmatch 'ZHANCLAW_API_KEY') { throw "config.yaml 缺少 zhan_ai provider 配置" }
+if ($ConfigText -notmatch '(?m)^\s+-\s*qwen3\s*(#.*)?$|^\s+models\s*:\s*\[[^\r\n\]]*qwen3') { throw "config.yaml 缺少 zhan_ai qwen3 模型兜底" }
 if ($ConfigText -match '(?m)^api_server_port\s*:') { throw "config.yaml 仍包含旧 api_server_port 配置" }
 if ($ConfigText -notmatch '(?s)platforms:.*api_server:.*enabled:\s*true.*extra:.*port\s*:\s*[^#\r\n]+') { throw "config.yaml 缺少 platforms.api_server.extra.port 配置" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
@@ -119,6 +120,7 @@ foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cm
   $RequiredShimText = Get-Content -Raw -Path $RequiredShim
   if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
   if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
+  if ($RequiredShimText -notmatch 'ZHANCLAW_BASE_URL' -or $RequiredShimText -notmatch 'ZHANCLAW_API_KEY') { throw "$RequiredShimName 未刷新 ZHANCLAW 用户环境变量" }
 }
 if (-not $PortableMode) {
   foreach ($LegacyShimDir in $LegacyShimDirs) {

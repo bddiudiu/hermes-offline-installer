@@ -146,6 +146,8 @@ def ensure_zhan_ai_provider():
             "  zhan_ai:",
             '    api: "${ZHANCLAW_BASE_URL}"',
             "    key_env: ZHANCLAW_API_KEY",
+            "    models:",
+            "      - qwen3",
         ])
         return
 
@@ -161,6 +163,8 @@ def ensure_zhan_ai_provider():
             "  zhan_ai:",
             '    api: "${ZHANCLAW_BASE_URL}"',
             "    key_env: ZHANCLAW_API_KEY",
+            "    models:",
+            "      - qwen3",
         ]
         return
 
@@ -189,6 +193,48 @@ def ensure_zhan_ai_provider():
         lines[key_env_index] = "    key_env: ZHANCLAW_API_KEY"
     else:
         lines.insert(zhan_index + 2, "    key_env: ZHANCLAW_API_KEY")
+        zhan_end += 1
+
+    zhan_end = nested_block_end(zhan_index, 2)
+    models_index = -1
+    for index in range(zhan_index + 1, zhan_end):
+        if re.match(r"^\s+models\s*:", lines[index]):
+            models_index = index
+            break
+
+    if models_index < 0:
+        model_insert_index = zhan_end
+        for index in range(zhan_index + 1, zhan_end):
+            if re.match(r"^\s+key_env\s*:", lines[index]):
+                model_insert_index = index + 1
+                break
+            if re.match(r"^\s+api\s*:", lines[index]):
+                model_insert_index = index + 1
+        lines[model_insert_index:model_insert_index] = [
+            "    models:",
+            "      - qwen3",
+        ]
+    else:
+        inline_match = re.match(r"^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$", lines[models_index])
+        if inline_match:
+            has_inline_qwen3 = re.search(r"(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)", inline_match.group(2))
+        else:
+            has_inline_qwen3 = False
+        if inline_match and not has_inline_qwen3:
+            inline_models = inline_match.group(2).strip()
+            inline_comment = inline_match.group(3) or ""
+            if inline_models:
+                lines[models_index] = f"{inline_match.group(1)}[{inline_models}, qwen3]{inline_comment}"
+            else:
+                lines[models_index] = f"{inline_match.group(1)}[qwen3]{inline_comment}"
+        elif re.match(r"^\s+models\s*:\s*$", lines[models_index]):
+            models_end = nested_block_end(models_index, 4)
+            has_qwen3_model = any(
+                re.match(r"^\s+(?:-\s*)?[\"']?qwen3[\"']?\s*(?::|#.*)?$", lines[index])
+                for index in range(models_index + 1, models_end)
+            )
+            if not has_qwen3_model:
+                lines.insert(models_index + 1, "      - qwen3")
 
 
 def remove_legacy_api_server_port():

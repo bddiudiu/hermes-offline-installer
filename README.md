@@ -285,14 +285,14 @@ Then reopen PowerShell or CMD.
 
 ## Configuration
 
-The installer configures the default model as `qwen3` through the `zhan_ai` provider. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai`, corrects the previous generated `gpt-4o-mini` default to `qwen3`, and keeps `providers.zhan_ai` present. Model service settings are read from Windows user environment variables:
+The installer configures the default model as `qwen3` through the `zhan_ai` provider. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai`, corrects the previous generated `gpt-4o-mini` default to `qwen3`, and keeps `providers.zhan_ai` present with `qwen3` as the fallback model when live discovery is unavailable. Model service settings are read from Windows user environment variables:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
 [Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
 
-After setting them, reopen PowerShell / CMD or restart ClawPanel / Hermes gateway. `$HERMES_HOME/.env` remains for non-model installer settings and does not store `ZHANCLAW_API_KEY`.
+After setting them, restart any already-running ClawPanel / Hermes gateway process. New Windows shim launches also refresh `ZHANCLAW_BASE_URL` and `ZHANCLAW_API_KEY` from the current User environment. `$HERMES_HOME/.env` remains for non-model installer settings and does not store `ZHANCLAW_API_KEY`.
 
 ## Notes
 
