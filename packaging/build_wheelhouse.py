@@ -18,7 +18,7 @@ PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
 
 OFFLINE_RUNTIME_REQUIREMENTS = [
     # Required by the api_server platform enabled in templates/config.yaml.
-    "aiohttp==3.13.4",
+    "aiohttp==3.14.1",
     # Required by `hermes dashboard`.
     "fastapi==0.133.1",
     # Required by FastAPI routes that accept form data.

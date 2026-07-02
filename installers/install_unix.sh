@@ -108,7 +108,7 @@ fi
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
 RUNTIME_PACKAGES=(
-  "aiohttp==3.13.4"
+  "aiohttp==3.14.1"
   "fastapi==0.133.1"
   "python-multipart"
   "uvicorn==0.41.0"

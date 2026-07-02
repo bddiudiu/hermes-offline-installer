@@ -997,7 +997,7 @@ if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $Venv
   throw "Python venv was not created correctly: $VenvDir"
 }
 $RuntimePackages = @(
-  "aiohttp==3.13.4",
+  "aiohttp==3.14.1",
   "fastapi==0.133.1",
   "python-multipart",
   "uvicorn==0.41.0",
