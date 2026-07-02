@@ -13,14 +13,14 @@
 | 4 | 升级"先删旧再装新"，中途失败会留下不可用的安装 | 🔴 高 | 两个安装器 | ✅ 已修复（工作区） |
 | 5 | UAC 提权安装时环境变量写进管理员账号，实际使用者拿不到 | 🔴 高 | `install_windows.ps1` 环境变量写入段 | ✅ 已修复（工作区） |
 | 6 | 杀进程按命令行子串 "hermes" 匹配，可能误杀无关进程 | 🔴 高 | 安装/卸载/停止脚本 | ✅ 已修复（工作区） |
-| 7 | `ProgramData\SSC\Hermes` 递归授予所有用户可写，密钥和 skills 可被同机用户读改 | 🟡 中 | `install_windows.ps1:99` | ⬜ |
-| 8 | verify 不检查 `hermes version` 的退出码，程序崩溃也算通过 | 🟡 中 | `verify_windows.ps1` 末行 | ⬜ |
-| 9 | 改用户 PATH 时把 `REG_EXPAND_SZ` 固化成展开后的字符串 | 🟡 中 | `install_windows.ps1:576,1614`、`uninstall_windows.ps1:348` | ⬜ |
-| 10 | shim 每次启动无条件覆盖 `ZHANCLAW_*` 会话变量；卸载误删用户自设的 `PYTHONUTF8` | 🟡 中 | shim 模板、`uninstall_windows.ps1:318` | ⬜ |
-| 11 | 运行时依赖清单在 3 处重复（打包脚本 + 两个安装器） | 🟢 低 | `build_wheelhouse.py:20`、`install_unix.sh:410`、`install_windows.ps1` | ⬜ |
-| 12 | config.yaml 迁移逻辑用 Python 和 PowerShell 各写一遍（约 700 行），易漂移 | 🟢 低 | 两个安装器 | ⬜ |
+| 7 | `ProgramData\SSC\Hermes` 递归授予所有用户可写，密钥和 skills 可被同机用户读改 | 🟡 中 | `install_windows.ps1:99` | ✅ 已修复（工作区） |
+| 8 | verify 不检查 `hermes version` 的退出码，程序崩溃也算通过 | 🟡 中 | `verify_windows.ps1` 末行 | ✅ 已修复（工作区） |
+| 9 | 改用户 PATH 时把 `REG_EXPAND_SZ` 固化成展开后的字符串 | 🟡 中 | `install_windows.ps1:576,1614`、`uninstall_windows.ps1:348` | ✅ 已修复（工作区） |
+| 10 | shim 每次启动无条件覆盖 `ZHANCLAW_*` 会话变量；卸载误删用户自设的 `PYTHONUTF8` | 🟡 中 | shim 模板、`uninstall_windows.ps1:318` | ✅ 已修复（工作区） |
+| 11 | 运行时依赖清单在 3 处重复（打包脚本 + 两个安装器） | 🟢 低 | `build_wheelhouse.py:20`、`install_unix.sh:410`、`install_windows.ps1` | ✅ 已修复（工作区） |
+| 12 | config.yaml 迁移逻辑用 Python 和 PowerShell 各写一遍（约 700 行），易漂移 | 🟢 低 | 两个安装器 | ✅ 已修复（工作区） |
 | 13 | Unix 安装器缺少 Windows 版已有的能力（停进程、legacy 迁移、venv 重试等） | 🟢 低 | `install_unix.sh` | ⬜ |
-| 14 | CI 只做语法检查，没有任何真实执行的测试 | 🟢 低 | `.github/workflows/validate.yml` | ⬜ |
+| 14 | CI 只做语法检查，没有任何真实执行的测试 | 🟢 低 | `.github/workflows/validate.yml` | ✅ 已修复（工作区） |
 | 15 | release 只构建 win-x64（README 承诺 4 平台）；`.gitignore` 缺 `.idea/` | 🟢 低 | `release.yml`、`.gitignore` | ⬜ |
 
 ## 修复建议
@@ -88,16 +88,28 @@ Windows 安装器现在会通过 `HKEY_USERS\<SID>\Environment` 读写目标用�
 
 ### 7. ProgramData ACL 过宽
 
+**修复（工作区）**：Windows 安装器不再对整个 `ProgramData\SSC\Hermes` 递归授予
+`BUILTIN\Users` 修改权限。安装后会收紧 Hermes home 的继承 ACL，只给 SYSTEM、
+Administrators 和安装发起用户访问；仅 `cache`、`logs`、`state` 三个运行时可写目录
+单独开放标准用户修改权限。
+
 **建议**：把授予 `BUILTIN\Users` 修改权限的范围从整个 `SSC\Hermes` 缩小到
 确需写入的子目录（`logs`、`cache`、`state`）；`.env` 与 `skills\` 保持仅管理员和
 SYSTEM 可写。若产品需求就是多用户共用，至少对 `.env` 单独收紧 ACL。
 
 ### 8. verify 不看退出码
 
+**修复（工作区）**：Windows verify 在执行 `hermes version` 后检查 `$LASTEXITCODE`，
+非 0 退出会直接失败。
+
 **建议**：`& $HermesCmd version` 后补 `if ($LASTEXITCODE -ne 0) { throw "hermes version 退出码 $LASTEXITCODE" }`。
 Unix 版有 `set -euo pipefail` 已覆盖，无需改。
 
 ### 9. PATH 固化 REG_EXPAND_SZ
+
+**修复（工作区）**：Windows 安装和卸载均通过目标用户 SID 下的
+`HKEY_USERS\<SID>\Environment` 读写环境变量。读取 PATH 时使用
+`DoNotExpandEnvironmentNames` 保留原始 `%VAR%` 文本；写回时保留原注册表类型。
 
 **建议**：读写用户 PATH 改用注册表 API 并保留类型：
 `(Get-Item HKCU:\Environment).GetValue("Path", "", "DoNotExpandEnvironmentNames")` 读原始值，
@@ -105,17 +117,27 @@ Unix 版有 `set -euo pipefail` 已覆盖，无需改。
 
 ### 10. shim 覆盖会话变量 / 卸载误删
 
+**修复（工作区）**：Windows shim 只在当前会话未定义 `ZHANCLAW_BASE_URL` /
+`ZHANCLAW_API_KEY` 时才从用户环境回填；卸载脚本不再删除用户自己的
+`PYTHONUTF8` / `PYTHONIOENCODING`。
+
 **建议**：shim 中 `reg query` 读 `ZHANCLAW_*` 的两行改成 `if not defined ZHANCLAW_BASE_URL ...`
 的条件赋值，与其他默认值行为保持一致；卸载脚本不再删除 `PYTHONUTF8`/`PYTHONIOENCODING`
 （无法区分是否用户自设），或仅当值与安装器写入值完全一致时才删。
 
 ### 11. 依赖清单三处重复
 
-**建议**：wheelhouse 构建时已把 `requirements.txt` 写进包内，两个安装器改为直接
-`pip install --no-index --find-links ... -r requirements.txt`（hermes spec 仍从 manifest 读），
-删除 `RUNTIME_PACKAGES` / PowerShell 中的重复清单，版本升级只改 `build_wheelhouse.py` 一处。
+**修复（工作区）**：`build_wheelhouse.py` 现在把安装期依赖写入 wheelhouse
+`manifest.json` 的 `install_requirements` 字段；Windows 和 Unix 安装器都从 manifest
+读取依赖，不再维护各自的 `RUNTIME_PACKAGES` / `$RuntimePackages`。
+
+**建议**：继续保持依赖清单单一来源，版本升级只改 `build_wheelhouse.py` 一处。
 
 ### 12. 配置迁移逻辑双实现
+
+**修复（工作区）**：配置迁移逻辑抽到 `scripts/configure_config.py`，Unix 和 Windows
+安装器都调用这份共享 Python 脚本；Windows 侧旧的 `Ensure-*` / `Remove-LegacyApiServerPort`
+等 PowerShell 迁移函数已删除。
 
 **建议**：把 `install_unix.sh` 内嵌的 Python 迁移脚本抽成独立文件（如
 `scripts/configure_config.py`）随包分发；两个安装器都在 venv 建好后用捆绑 Python 调它。
@@ -128,6 +150,9 @@ Unix 版有 `set -euo pipefail` 已覆盖，无需改。
 venv 创建失败时清理重试；`.env`/config 的 legacy 迁移如果 Unix 用户群需要再做。
 
 ### 14. CI 缺真实测试
+
+**修复（工作区）**：新增 `scripts/test_configure_config.py`，覆盖默认配置生成、旧
+`api_server_port` 迁移和 inline models 追加；`validate.yml` 会编译新脚本并真实运行该测试。
 
 **建议**：分两步走——
 1. 低成本：`validate.yml` 加 `shellcheck installers/install_unix.sh scripts/verify_unix.sh`。

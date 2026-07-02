@@ -149,3 +149,6 @@ if (-not $PortableMode) {
 }
 
 & $HermesCmd version
+if ($LASTEXITCODE -ne 0) {
+  throw "hermes version 退出码 $LASTEXITCODE"
+}

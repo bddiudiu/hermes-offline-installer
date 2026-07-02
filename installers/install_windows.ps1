@@ -195,19 +195,47 @@ function Set-TargetUserEnvironmentVariable {
   }
 }
 
-function Grant-HermesHomeAccess {
+function Set-HermesHomeAccess {
   param(
-    [string] $Path
+    [string] $Path,
+    [string] $UserSid
   )
 
   if (-not (Get-Command icacls.exe -ErrorAction SilentlyContinue)) {
-    Write-Warning "icacls.exe was not found; could not grant standard Users modify access to $Path."
+    Write-Warning "icacls.exe was not found; could not update Hermes home ACLs for $Path."
     return
   }
 
-  & icacls.exe $Path /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
+  & icacls.exe $Path /inheritance:r /T /C | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not grant standard Users modify access to $Path. Hermes may need administrator rights to write config, logs, or caches."
+    Write-Warning "Could not disable inherited ACLs under $Path."
+  }
+
+  & icacls.exe $Path /remove:g "*S-1-5-32-545" /T /C | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not remove broad standard Users ACLs from $Path."
+  }
+
+  $SystemGrant = "*S-1-5-18:(OI)(CI)F"
+  $AdminGrant = "*S-1-5-32-544:(OI)(CI)F"
+  $TargetUserGrant = "*{0}:(OI)(CI)M" -f $UserSid
+  & icacls.exe $Path /grant:r $SystemGrant $AdminGrant $TargetUserGrant /T /C | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not grant restricted Hermes home access to $Path. Hermes may need administrator rights to write config or state."
+  }
+
+  & icacls.exe $Path /grant "*S-1-5-32-545:RX" /C | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not grant standard Users traverse access to $Path."
+  }
+
+  foreach ($WritableName in @("cache", "logs", "state")) {
+    $WritablePath = Join-Path $Path $WritableName
+    New-Item -ItemType Directory -Force -Path $WritablePath | Out-Null
+    & icacls.exe $WritablePath /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Could not grant standard Users modify access to runtime writable directory $WritablePath."
+    }
   }
 }
 
@@ -936,18 +964,6 @@ function Sync-BundledSkills {
   }
 }
 
-function New-StringList {
-  param(
-    [string[]] $Lines
-  )
-
-  $List = New-Object "System.Collections.Generic.List[string]"
-  foreach ($Line in $Lines) {
-    [void] $List.Add($Line)
-  }
-  return ,$List
-}
-
 function Write-Utf8NoBomLines {
   param(
     [string] $Path,
@@ -956,224 +972,6 @@ function Write-Utf8NoBomLines {
 
   $Encoding = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllLines($Path, $Lines, $Encoding)
-}
-
-function Find-TopLevelYamlKey {
-  param(
-    [System.Collections.Generic.List[string]] $Lines,
-    [string] $Key
-  )
-
-  $Pattern = "^{0}:\s*(#.*)?$" -f [regex]::Escape($Key)
-  for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
-    if ($Lines[$Index] -match $Pattern) {
-      return $Index
-    }
-  }
-  return -1
-}
-
-function Get-TopLevelYamlBlockEnd {
-  param(
-    [System.Collections.Generic.List[string]] $Lines,
-    [int] $StartIndex
-  )
-
-  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
-    $Line = $Lines[$Index]
-    if ($Line -match '^\S' -and $Line -notmatch '^\s*#') {
-      return $Index
-    }
-  }
-  return $Lines.Count
-}
-
-function Get-YamlNestedBlockEnd {
-  param(
-    [System.Collections.Generic.List[string]] $Lines,
-    [int] $StartIndex,
-    [int] $Indent
-  )
-
-  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
-    $Line = $Lines[$Index]
-    if ($Line -match '^\s*$' -or $Line -match '^\s*#') {
-      continue
-    }
-    $Leading = ([regex]::Match($Line, '^\s*')).Value.Length
-    if ($Leading -le $Indent) {
-      return $Index
-    }
-  }
-  return $Lines.Count
-}
-
-function Ensure-ModelProviderLine {
-  param(
-    [System.Collections.Generic.List[string]] $Lines
-  )
-
-  $ModelIndex = Find-TopLevelYamlKey -Lines $Lines -Key "model"
-  if ($ModelIndex -lt 0) {
-    $Lines.Insert(0, "")
-    $Lines.Insert(0, "  provider: custom:zhan_ai")
-    $Lines.Insert(0, "  default: qwen3")
-    $Lines.Insert(0, "model:")
-    return
-  }
-
-  $ModelEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ModelIndex
-  $DefaultIndex = -1
-  $ProviderIndex = -1
-  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s+default\s*:') {
-      $DefaultIndex = $Index
-    }
-    if ($Lines[$Index] -match '^\s+provider\s*:') {
-      $ProviderIndex = $Index
-    }
-  }
-
-  if ($DefaultIndex -lt 0) {
-    $Lines.Insert($ModelIndex + 1, "  default: qwen3")
-    $ModelEnd++
-  } elseif (
-    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*([#].*)?$' -or
-    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*[''"]?gpt-4o-mini[''"]?\s*(#.*)?$'
-  ) {
-    $Lines[$DefaultIndex] = "  default: qwen3"
-  }
-
-  $ProviderIndex = -1
-  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s+provider\s*:') {
-      $ProviderIndex = $Index
-      break
-    }
-  }
-
-  if ($ProviderIndex -ge 0) {
-    $Lines[$ProviderIndex] = "  provider: custom:zhan_ai"
-  } else {
-    $InsertIndex = if ($DefaultIndex -ge 0) { $DefaultIndex + 1 } else { $ModelIndex + 2 }
-    $Lines.Insert($InsertIndex, "  provider: custom:zhan_ai")
-  }
-}
-
-function Ensure-ZhanAiProviderBlock {
-  param(
-    [System.Collections.Generic.List[string]] $Lines
-  )
-
-  $ProvidersIndex = Find-TopLevelYamlKey -Lines $Lines -Key "providers"
-  if ($ProvidersIndex -lt 0) {
-    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
-      [void] $Lines.Add("")
-    }
-    [void] $Lines.Add("providers:")
-    [void] $Lines.Add("  zhan_ai:")
-    [void] $Lines.Add('    api: "${ZHANCLAW_BASE_URL}"')
-    [void] $Lines.Add("    key_env: ZHANCLAW_API_KEY")
-    [void] $Lines.Add("    models:")
-    [void] $Lines.Add("      - qwen3")
-    return
-  }
-
-  $ProvidersEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ProvidersIndex
-  $ZhanIndex = -1
-  for ($Index = $ProvidersIndex + 1; $Index -lt $ProvidersEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{2}zhan_ai\s*:\s*(#.*)?$') {
-      $ZhanIndex = $Index
-      break
-    }
-  }
-
-  if ($ZhanIndex -lt 0) {
-    $Lines.Insert($ProvidersIndex + 1, "      - qwen3")
-    $Lines.Insert($ProvidersIndex + 1, "    models:")
-    $Lines.Insert($ProvidersIndex + 1, "    key_env: ZHANCLAW_API_KEY")
-    $Lines.Insert($ProvidersIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
-    $Lines.Insert($ProvidersIndex + 1, "  zhan_ai:")
-    return
-  }
-
-  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
-  $ApiIndex = -1
-  $KeyEnvIndex = -1
-  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s+api\s*:') {
-      $ApiIndex = $Index
-    }
-    if ($Lines[$Index] -match '^\s+key_env\s*:') {
-      $KeyEnvIndex = $Index
-    }
-  }
-
-  if ($ApiIndex -ge 0) {
-    $Lines[$ApiIndex] = '    api: "${ZHANCLAW_BASE_URL}"'
-  } else {
-    $Lines.Insert($ZhanIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
-    $ZhanEnd++
-  }
-
-  $KeyEnvIndex = -1
-  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s+key_env\s*:') {
-      $KeyEnvIndex = $Index
-      break
-    }
-  }
-  if ($KeyEnvIndex -ge 0) {
-    $Lines[$KeyEnvIndex] = "    key_env: ZHANCLAW_API_KEY"
-  } else {
-    $Lines.Insert($ZhanIndex + 2, "    key_env: ZHANCLAW_API_KEY")
-    $ZhanEnd++
-  }
-
-  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
-  $ModelsIndex = -1
-  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s+models\s*:') {
-      $ModelsIndex = $Index
-      break
-    }
-  }
-  if ($ModelsIndex -lt 0) {
-    $ModelInsertIndex = $ZhanEnd
-    for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
-      if ($Lines[$Index] -match '^\s+key_env\s*:') {
-        $ModelInsertIndex = $Index + 1
-        break
-      }
-      if ($Lines[$Index] -match '^\s+api\s*:') {
-        $ModelInsertIndex = $Index + 1
-      }
-    }
-    $Lines.Insert($ModelInsertIndex, "      - qwen3")
-    $Lines.Insert($ModelInsertIndex, "    models:")
-  } elseif ($Lines[$ModelsIndex] -match '^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$') {
-    if ($Matches[2] -notmatch '(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)') {
-      $InlineModels = $Matches[2].Trim()
-      $InlineComment = if ($Matches[3]) { $Matches[3] } else { "" }
-      if ($InlineModels) {
-        $Lines[$ModelsIndex] = "$($Matches[1])[$InlineModels, qwen3]$InlineComment"
-      } else {
-        $Lines[$ModelsIndex] = "$($Matches[1])[qwen3]$InlineComment"
-      }
-    }
-  } elseif ($Lines[$ModelsIndex] -match '^\s+models\s*:\s*$') {
-    $ModelsEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ModelsIndex -Indent 4
-    $HasQwen3Model = $false
-    for ($Index = $ModelsIndex + 1; $Index -lt $ModelsEnd; $Index++) {
-      if ($Lines[$Index] -match '^\s+(?:-\s*)?[''"]?qwen3[''"]?\s*(?::|#.*)?$') {
-        $HasQwen3Model = $true
-        break
-      }
-    }
-    if (-not $HasQwen3Model) {
-      $Lines.Insert($ModelsIndex + 1, "      - qwen3")
-    }
-  }
 }
 
 function Get-DotEnvValue {
@@ -1342,178 +1140,6 @@ function Copy-LegacyHermesHomeFileIfMissing {
   Write-Host "Migrated legacy Hermes $Label from $LegacyPath to $TargetPath."
 }
 
-function Remove-LegacyApiServerPort {
-  param(
-    [System.Collections.Generic.List[string]] $Lines
-  )
-
-  $Port = $null
-  for ($Index = $Lines.Count - 1; $Index -ge 0; $Index--) {
-    if ($Lines[$Index] -match '^api_server_port\s*:\s*([^#]+)?') {
-      $Candidate = $Matches[1]
-      if ($Candidate -and $Candidate.Trim()) {
-        $Port = $Candidate.Trim()
-      }
-      $Lines.RemoveAt($Index)
-    }
-  }
-  return $Port
-}
-
-function Ensure-ApiServerPlatformConfig {
-  param(
-    [System.Collections.Generic.List[string]] $Lines,
-    [AllowNull()] [string] $Port
-  )
-
-  $EffectivePort = if ($Port) { $Port } else { "8642" }
-
-  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
-  if ($PlatformsIndex -lt 0) {
-    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
-      [void] $Lines.Add("")
-    }
-    [void] $Lines.Add("platforms:")
-    [void] $Lines.Add("  api_server:")
-    [void] $Lines.Add("    enabled: true")
-    [void] $Lines.Add("    extra:")
-    [void] $Lines.Add("      port: $EffectivePort")
-    return
-  }
-
-  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
-  $ApiServerIndex = -1
-  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
-      $ApiServerIndex = $Index
-      break
-    }
-  }
-
-  if ($ApiServerIndex -lt 0) {
-    $Lines.Insert($PlatformsIndex + 1, "      port: $EffectivePort")
-    $Lines.Insert($PlatformsIndex + 1, "    extra:")
-    $Lines.Insert($PlatformsIndex + 1, "    enabled: true")
-    $Lines.Insert($PlatformsIndex + 1, "  api_server:")
-    return
-  }
-
-  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
-  $EnabledIndex = -1
-  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{4}enabled\s*:') {
-      $EnabledIndex = $Index
-      break
-    }
-  }
-  if ($EnabledIndex -ge 0) {
-    $Lines[$EnabledIndex] = "    enabled: true"
-  } else {
-    $Lines.Insert($ApiServerIndex + 1, "    enabled: true")
-    $EnabledIndex = $ApiServerIndex + 1
-  }
-
-  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
-  $ExtraIndex = -1
-  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
-      $ExtraIndex = $Index
-      break
-    }
-  }
-
-  if ($ExtraIndex -lt 0) {
-    $InsertIndex = $EnabledIndex + 1
-    $Lines.Insert($InsertIndex, "    extra:")
-    $Lines.Insert($InsertIndex + 1, "      port: $EffectivePort")
-    return
-  }
-
-  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
-  $PortIndex = -1
-  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{6}port\s*:') {
-      $PortIndex = $Index
-      break
-    }
-  }
-  if ($PortIndex -ge 0) {
-    if ($Port) {
-      $Lines[$PortIndex] = "      port: $Port"
-    }
-  } else {
-    $Lines.Insert($ExtraIndex + 1, "      port: $EffectivePort")
-  }
-}
-
-function Get-ApiServerPlatformPort {
-  param(
-    [System.Collections.Generic.List[string]] $Lines
-  )
-
-  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
-  if ($PlatformsIndex -lt 0) {
-    return $null
-  }
-
-  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
-  $ApiServerIndex = -1
-  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
-      $ApiServerIndex = $Index
-      break
-    }
-  }
-  if ($ApiServerIndex -lt 0) {
-    return $null
-  }
-
-  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
-  $ExtraIndex = -1
-  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
-      $ExtraIndex = $Index
-      break
-    }
-  }
-  if ($ExtraIndex -lt 0) {
-    return $null
-  }
-
-  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
-  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
-    if ($Lines[$Index] -match '^\s{6}port\s*:\s*([^#]+)?') {
-      $Candidate = $Matches[1]
-      if ($Candidate -and $Candidate.Trim()) {
-        return $Candidate.Trim()
-      }
-      return $null
-    }
-  }
-  return $null
-}
-
-function Set-OfflineInstallerDefaultConfig {
-  param(
-    [string] $ConfigPath
-  )
-
-  $ConfigLines = @()
-  if (Test-Path $ConfigPath) {
-    $ConfigLines = @(Get-Content -Path $ConfigPath -Encoding UTF8 -ErrorAction Stop)
-  }
-  $MutableLines = New-StringList -Lines $ConfigLines
-  $LegacyApiServerPort = Remove-LegacyApiServerPort -Lines $MutableLines
-  Ensure-ModelProviderLine -Lines $MutableLines
-  Ensure-ZhanAiProviderBlock -Lines $MutableLines
-  Ensure-ApiServerPlatformConfig -Lines $MutableLines -Port $LegacyApiServerPort
-  $ApiServerPort = Get-ApiServerPlatformPort -Lines $MutableLines
-  $OutputLines = $MutableLines.ToArray()
-  Write-Utf8NoBomLines -Path $ConfigPath -Lines $OutputLines
-  Write-Host "Configured default model provider: custom:zhan_ai"
-  Write-Host "Configured API server platform port: $ApiServerPort"
-}
-
 $ShimDirs = @($BinDir)
 $ProcessShimDirs = (@($BinDir) + $LegacyShimDirs) | Where-Object { $_ } | Select-Object -Unique
 if ($env:HERMES_OFFLINE_HOME -and -not $CustomInstallRoot) {
@@ -1551,9 +1177,6 @@ if ($PortableMode) {
 }
 $InstallDirs = @($HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
-if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
-  Grant-HermesHomeAccess -Path $HermesHome
-}
 
 $Wheelhouse = Join-Path $BundleDir "wheelhouse"
 if (-not (Test-Path $Wheelhouse)) {
@@ -1640,30 +1263,29 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
 }
-$RuntimePackages = @(
-  "aiohttp==3.14.1",
-  "fastapi==0.133.1",
-  "python-multipart",
-  "uvicorn==0.41.0",
-  "websockets"
-)
 $HermesInstallSpec = "hermes-agent[all]"
+$InstallRequirements = @()
 $WheelhouseManifest = Join-Path $RuntimeWheelhouse "manifest.json"
-if (Test-Path $WheelhouseManifest) {
-  try {
-    $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest -Encoding UTF8 | ConvertFrom-Json
-    $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
-    if ($Extras.Count -gt 0) {
-      $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
-    } else {
-      $HermesInstallSpec = "hermes-agent"
-    }
-  } catch {
-    Write-Warning "Could not parse wheelhouse manifest. Falling back to $HermesInstallSpec. Error: $($_.Exception.Message)"
+if (-not (Test-Path $WheelhouseManifest)) {
+  throw "Missing wheelhouse manifest: $WheelhouseManifest"
+}
+try {
+  $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest -Encoding UTF8 | ConvertFrom-Json
+  $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
+  if ($Extras.Count -gt 0) {
+    $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
+  } else {
+    $HermesInstallSpec = "hermes-agent"
   }
+  $InstallRequirements = @($WheelhouseMeta.install_requirements) | Where-Object { $_ }
+  if ($InstallRequirements.Count -eq 0) {
+    throw "wheelhouse manifest has no install_requirements"
+  }
+} catch {
+  throw "Could not parse wheelhouse manifest. Error: $($_.Exception.Message)"
 }
 Write-Host "Installing Hermes package spec: $HermesInstallSpec"
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse $HermesInstallSpec croniter @RuntimePackages
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse $HermesInstallSpec @InstallRequirements
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
@@ -1721,8 +1343,8 @@ $HermesShimDefaultEnvironmentLines = @($HermesDefaultEnvironment.GetEnumerator()
   'if not defined {0} set "{0}={1}"' -f $_.Key, $_.Value
 })
 $HermesShimUserEnvironmentLines = @(
-  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
-  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
+  'if not defined ZHANCLAW_BASE_URL for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
+  'if not defined ZHANCLAW_API_KEY for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
 )
 $ShimLines = @(
   "@echo off",
@@ -1805,7 +1427,14 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $Legacy
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
-Set-OfflineInstallerDefaultConfig -ConfigPath $ConfigPath
+$ConfigureConfigScript = Join-Path $BundleDir "scripts\configure_config.py"
+if (-not (Test-Path $ConfigureConfigScript)) {
+  throw "Missing config migration script: $ConfigureConfigScript"
+}
+& $VenvPython $ConfigureConfigScript $ConfigPath
+if ($LASTEXITCODE -ne 0) {
+  throw "Config migration failed with exit code $LASTEXITCODE."
+}
 
 $EnvPath = Join-Path $HermesHome ".env"
 $LegacyEnvPath = Join-Path $LegacyHermesHome ".env"
@@ -1823,6 +1452,9 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnv
 Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPaths $ZhanEnvImportPaths -PortableMode $PortableMode
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
+if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
+  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid
+}
 
 if (-not $PortableMode) {
   Remove-UserPathEntries -Paths @($LegacyOfflineBinDir)

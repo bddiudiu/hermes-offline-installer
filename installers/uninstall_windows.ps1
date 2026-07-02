@@ -424,9 +424,7 @@ function Remove-UserEnvironment {
     "HERMES_BUNDLED_LOCALES",
     "HERMES_BUNDLED_PLUGINS",
     "HERMES_WEB_DIST",
-    "HERMES_TUI_DIR",
-    "PYTHONUTF8",
-    "PYTHONIOENCODING"
+    "HERMES_TUI_DIR"
   )) {
     Set-TargetUserEnvironmentVariable -Name $Name -Value $null
     Remove-Item "Env:$Name" -ErrorAction SilentlyContinue
