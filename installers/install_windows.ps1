@@ -221,7 +221,16 @@ function Set-HermesHomeAccess {
   $AdminGrant = "*S-1-5-32-544:(OI)(CI)F"
   & icacls.exe $Path /grant:r $SystemGrant $AdminGrant /T /C | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not grant system and administrator access to $Path."
+    # A previous install may have stripped inheritance without granting
+    # Administrators, locking even elevated processes out. Take ownership
+    # for the Administrators group and retry once.
+    if (Get-Command takeown.exe -ErrorAction SilentlyContinue) {
+      & takeown.exe /F $Path /R /A /D Y | Out-Null
+      & icacls.exe $Path /grant:r $SystemGrant $AdminGrant /T /C | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Could not grant system and administrator access to $Path."
+    }
   }
 
   $UserSids = @($UserSid, $CurrentSid) | Where-Object { $_ } | Select-Object -Unique
@@ -1186,6 +1195,13 @@ if ($PortableMode) {
 }
 $InstallDirs = @($HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
+if ($IsUpgrade -and -not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
+  # Repair ACLs left by earlier installer builds before the upgrade reads
+  # config.yaml/.env: those builds could strip inheritance from Hermes home
+  # without granting Administrators, so config migration failed with
+  # PermissionError even when elevated.
+  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid -CurrentSid $CurrentUserSid
+}
 
 $Wheelhouse = Join-Path $BundleDir "wheelhouse"
 if (-not (Test-Path $Wheelhouse)) {
