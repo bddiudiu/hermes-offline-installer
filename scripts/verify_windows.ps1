@@ -93,7 +93,7 @@ if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim:
 $HermesExeShim = Join-Path $BinDir "hermes.exe"
 if (-not (Test-Path $HermesExeShim)) { throw "缺少 hermes.exe shim: $HermesExeShim" }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
-$ConfigText = Get-Content -Raw -Path $Config
+$ConfigText = Get-Content -Raw -Path $Config -Encoding UTF8
 if ($ConfigText -notmatch '(?m)^\s+default\s*:\s*qwen3\s*(#.*)?$') { throw "config.yaml 未默认选择 qwen3 模型" }
 if ($ConfigText -notmatch 'provider:\s*custom:zhan_ai') { throw "config.yaml 未默认选择 zhan_ai 渠道" }
 if ($ConfigText -notmatch 'zhan_ai:' -or $ConfigText -notmatch 'ZHANCLAW_BASE_URL' -or $ConfigText -notmatch 'ZHANCLAW_API_KEY') { throw "config.yaml 缺少 zhan_ai provider 配置" }
@@ -117,7 +117,7 @@ if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\package.json"))) { throw 
 foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd")) {
   $RequiredShim = Join-Path $BinDir $RequiredShimName
   if (-not (Test-Path $RequiredShim)) { throw "缺少 shim: $RequiredShim" }
-  $RequiredShimText = Get-Content -Raw -Path $RequiredShim
+  $RequiredShimText = Get-Content -Raw -Path $RequiredShim -Encoding UTF8
   if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
   if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
   if ($RequiredShimText -notmatch 'ZHANCLAW_BASE_URL' -or $RequiredShimText -notmatch 'ZHANCLAW_API_KEY') { throw "$RequiredShimName 未刷新 ZHANCLAW 用户环境变量" }

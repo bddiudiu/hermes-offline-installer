@@ -1048,7 +1048,7 @@ function Get-DotEnvValue {
     }
   }
 
-  foreach ($Line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
+  foreach ($Line in (Get-Content -Path $Path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
     if ($Line -notmatch '^\s*([^#=\s]+)\s*=\s*(.*)$') {
       continue
     }
@@ -1292,7 +1292,7 @@ function Set-OfflineInstallerDefaultConfig {
 
   $ConfigLines = @()
   if (Test-Path $ConfigPath) {
-    $ConfigLines = @(Get-Content -Path $ConfigPath -ErrorAction Stop)
+    $ConfigLines = @(Get-Content -Path $ConfigPath -Encoding UTF8 -ErrorAction Stop)
   }
   $MutableLines = New-StringList -Lines $ConfigLines
   $LegacyApiServerPort = Remove-LegacyApiServerPort -Lines $MutableLines
@@ -1430,7 +1430,7 @@ $HermesInstallSpec = "hermes-agent[all]"
 $WheelhouseManifest = Join-Path $RuntimeWheelhouse "manifest.json"
 if (Test-Path $WheelhouseManifest) {
   try {
-    $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest | ConvertFrom-Json
+    $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest -Encoding UTF8 | ConvertFrom-Json
     $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
     if ($Extras.Count -gt 0) {
       $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
@@ -1537,18 +1537,21 @@ $UninstallShimLines = @(
 $ExeShimTemplate = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.exe" -f ([System.Guid]::NewGuid().ToString("N")))
 New-HermesExeShimTemplate -OutputPath $ExeShimTemplate
 foreach ($ShimDir in $ShimDirs) {
-  Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
-  Set-Content -Path (Join-Path $ShimDir "dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
-  Set-Content -Path (Join-Path $ShimDir "dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-launch.cmd") -Encoding ASCII -Value $LaunchShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-launch.bat") -Encoding ASCII -Value $LaunchShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Encoding ASCII -Value $ShutdownShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Encoding ASCII -Value $UninstallShimLines
-  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Encoding ASCII -Value $UninstallShimLines
+  # UTF-8 without BOM: cmd.exe misparses a BOM on the first line, and the
+  # shims switch to code page 65001 before any line that embeds a path, so
+  # non-ASCII install locations survive intact.
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes.cmd") -Lines $ShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes.bat") -Lines $ShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "dashboard.cmd") -Lines $DashboardShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "dashboard.bat") -Lines $DashboardShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Lines $DashboardShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Lines $DashboardShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-launch.cmd") -Lines $LaunchShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-launch.bat") -Lines $LaunchShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Lines $ShutdownShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Lines $ShutdownShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Lines $UninstallShimLines
+  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Lines $UninstallShimLines
   Install-HermesExeShim -ShimDir $ShimDir -TemplatePath $ExeShimTemplate
 }
 Remove-Item -Force $ExeShimTemplate -ErrorAction SilentlyContinue
