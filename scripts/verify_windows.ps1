@@ -101,6 +101,23 @@ if ($ConfigText -notmatch '(?m)^\s+-\s*qwen3\s*(#.*)?$|^\s+models\s*:\s*\[[^\r\n
 if ($ConfigText -match '(?m)^api_server_port\s*:') { throw "config.yaml 仍包含旧 api_server_port 配置" }
 if ($ConfigText -notmatch '(?s)platforms:.*api_server:.*enabled:\s*true.*extra:.*port\s*:\s*[^#\r\n]+') { throw "config.yaml 缺少 platforms.api_server.extra.port 配置" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
+$EnvLines = @(Get-Content -Path $EnvFile -Encoding UTF8 -ErrorAction Stop)
+$ApiServerKey = $null
+foreach ($Line in $EnvLines) {
+  if ($Line -match '^\s*API_SERVER_KEY\s*=\s*(.*)$') {
+    $ApiServerKey = $Matches[1].Trim()
+  }
+}
+if ($ApiServerKey -and $ApiServerKey.Length -ge 2) {
+  $First = $ApiServerKey.Substring(0, 1)
+  $Last = $ApiServerKey.Substring($ApiServerKey.Length - 1, 1)
+  if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
+    $ApiServerKey = $ApiServerKey.Substring(1, $ApiServerKey.Length - 2)
+  }
+}
+if (-not $ApiServerKey -or $ApiServerKey -eq "clawpanel-local" -or $ApiServerKey.Length -lt 16) {
+  throw ".env 中 API_SERVER_KEY 缺失或仍为弱占位符"
+}
 if (-not (Test-Path $SkillsDir)) { throw "缺少 Agent Skills 目录: $SkillsDir" }
 $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File -ErrorAction SilentlyContinue)
 if ($SkillFiles.Count -eq 0) { throw "Agent Skills 目录中缺少 SKILL.md: $SkillsDir" }

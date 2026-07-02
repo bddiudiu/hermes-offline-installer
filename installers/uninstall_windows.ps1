@@ -70,11 +70,126 @@ function Test-IsAdministrator {
   return $Principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-CurrentUserSid {
+  return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Get-InstallerTargetUserSid {
+  $Sid = $env:HERMES_INSTALLER_USER_SID
+  if ($Sid -and $Sid -match '^S-\d-\d+-.+') {
+    return $Sid
+  }
+  return Get-CurrentUserSid
+}
+
+function Get-UserProfilePathFromSid {
+  param(
+    [string] $Sid
+  )
+
+  try {
+    $ProfileListPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$Sid"
+    $ProfileImagePath = (Get-ItemProperty -Path $ProfileListPath -Name "ProfileImagePath" -ErrorAction Stop).ProfileImagePath
+    if ($ProfileImagePath) {
+      return [Environment]::ExpandEnvironmentVariables($ProfileImagePath)
+    }
+  } catch {
+  }
+  return $env:USERPROFILE
+}
+
+function Open-TargetUserEnvironmentKey {
+  param(
+    [bool] $Writable
+  )
+
+  $UsersRoot = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::Users,
+    [Microsoft.Win32.RegistryView]::Default
+  )
+  try {
+    $KeyPath = "$TargetUserSid\Environment"
+    $Key = if ($Writable) {
+      $UsersRoot.CreateSubKey($KeyPath)
+    } else {
+      $UsersRoot.OpenSubKey($KeyPath, $false)
+    }
+    if (-not $Key) {
+      throw "Could not open HKEY_USERS\$KeyPath"
+    }
+    return $Key
+  } finally {
+    $UsersRoot.Dispose()
+  }
+}
+
+function Get-TargetUserEnvironmentVariable {
+  param(
+    [string] $Name,
+    [switch] $DoNotExpand
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $false
+  try {
+    if ($DoNotExpand) {
+      return $Key.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    }
+    return $Key.GetValue($Name, $null)
+  } finally {
+    $Key.Dispose()
+  }
+}
+
+function Get-TargetUserEnvironmentValueKind {
+  param(
+    [string] $Name
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $false
+  try {
+    try {
+      return $Key.GetValueKind($Name)
+    } catch {
+      return [Microsoft.Win32.RegistryValueKind]::String
+    }
+  } finally {
+    $Key.Dispose()
+  }
+}
+
+function Set-TargetUserEnvironmentVariable {
+  param(
+    [string] $Name,
+    [AllowNull()] [string] $Value,
+    [Microsoft.Win32.RegistryValueKind] $Kind = [Microsoft.Win32.RegistryValueKind]::String
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $true
+  try {
+    if ($null -eq $Value) {
+      try {
+        $Key.DeleteValue($Name, $false)
+      } catch {
+      }
+      return
+    }
+    $Key.SetValue($Name, $Value, $Kind)
+  } finally {
+    $Key.Dispose()
+  }
+}
+
 $LocalPortableRoot = Join-Path $BundleDirPath ".hermes-offline"
 $LocalPortableHome = Join-Path $BundleDirPath ".hermes"
 $DefaultProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
-$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
-$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
+$CurrentUserSid = Get-CurrentUserSid
+$TargetUserSid = Get-InstallerTargetUserSid
+$TargetUserProfile = Get-UserProfilePathFromSid -Sid $TargetUserSid
+if ($TargetUserSid -ne $CurrentUserSid) {
+  Write-Host "Removing User environment variables for original installer user SID: $TargetUserSid"
+}
+$LegacyInstallRoot = Join-Path $TargetUserProfile ".hermes-offline"
+$LegacyHermesHome = Join-Path $TargetUserProfile ".hermes"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
 $CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
   $env:HERMES_OFFLINE_HOME
@@ -152,15 +267,10 @@ function Get-HermesProcesses {
       (Test-ProcessMatchesPath -Value $ExecutablePath -Paths $MatchPaths) -or
       (Test-ProcessMatchesPath -Value $CommandLine -Paths $MatchPaths)
     )
-    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and ($MatchesKnownPath -or (
-      $CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-    ))) {
+    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and $MatchesKnownPath) {
       return $true
     }
-    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and (
-      $MatchesKnownPath -or
-      ($CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-    )) {
+    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and $MatchesKnownPath) {
       return $true
     }
     return $false
@@ -318,7 +428,7 @@ function Remove-UserEnvironment {
     "PYTHONUTF8",
     "PYTHONIOENCODING"
   )) {
-    [Environment]::SetEnvironmentVariable($Name, $null, "User")
+    Set-TargetUserEnvironmentVariable -Name $Name -Value $null
     Remove-Item "Env:$Name" -ErrorAction SilentlyContinue
   }
 }
@@ -328,10 +438,11 @@ function Remove-InstallRootFromUserPath {
     [string] $BinDir
   )
 
-  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $UserPath = Get-TargetUserEnvironmentVariable -Name "Path" -DoNotExpand
   if (-not $UserPath) {
     return
   }
+  $UserPathKind = Get-TargetUserEnvironmentValueKind -Name "Path"
 
   $BinDirFull = ConvertTo-ComparablePath -Path $BinDir
   $PathParts = @()
@@ -345,7 +456,7 @@ function Remove-InstallRootFromUserPath {
     }
   }
 
-  [Environment]::SetEnvironmentVariable("Path", ($PathParts | Select-Object -Unique) -join ";", "User")
+  Set-TargetUserEnvironmentVariable -Name "Path" -Value (($PathParts | Select-Object -Unique) -join ";") -Kind $UserPathKind
 }
 
 if (-not $PortableMode -and (Test-PathUnderRoot -Path $InstallRoot -Root $DefaultProgramFilesRoot) -and -not (Test-IsAdministrator)) {

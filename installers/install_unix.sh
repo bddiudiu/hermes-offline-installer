@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,7 +26,109 @@ RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
 RUNTIME_BUNDLE="$RUNTIME_DIR/bundle-runtime"
 RUNTIME_RESOURCES="$RUNTIME_DIR/hermes-resources"
 
-mkdir -p "$RUNTIME_DIR" "$BIN_DIR" "$HERMES_HOME"
+mkdir -p "$BIN_DIR" "$HERMES_HOME"
+
+RUNTIME_BACKUP_DIR=""
+RUNTIME_INSTALL_COMMITTED=0
+
+restore_runtime_on_error() {
+  local exit_code=$?
+  if [ "${RUNTIME_INSTALL_COMMITTED:-0}" = "1" ]; then
+    exit "$exit_code"
+  fi
+
+  echo "Hermes install/upgrade failed. Restoring the previous runtime if one was backed up." >&2
+  if [ -n "${RUNTIME_BACKUP_DIR:-}" ] && [ -d "$RUNTIME_BACKUP_DIR" ]; then
+    rm -rf "$RUNTIME_DIR"
+    mv "$RUNTIME_BACKUP_DIR" "$RUNTIME_DIR"
+    echo "Restored previous Hermes runtime: $RUNTIME_DIR" >&2
+  elif [ -z "${RUNTIME_BACKUP_DIR:-}" ] && [ -d "$RUNTIME_DIR" ]; then
+    rm -rf "$RUNTIME_DIR"
+  fi
+  exit "$exit_code"
+}
+
+backup_existing_runtime() {
+  if [ ! -d "$RUNTIME_DIR" ]; then
+    mkdir -p "$RUNTIME_DIR"
+    return
+  fi
+
+  local parent
+  local name
+  local timestamp
+  local candidate
+  local index
+  parent="$(dirname "$RUNTIME_DIR")"
+  name="$(basename "$RUNTIME_DIR")"
+  timestamp="$(date +%Y%m%d%H%M%S)"
+  candidate="$parent/$name.old.$timestamp"
+  index=0
+  while [ -e "$candidate" ]; do
+    index=$((index + 1))
+    candidate="$parent/$name.old.$timestamp.$index"
+  done
+
+  RUNTIME_BACKUP_DIR="$candidate"
+  mv "$RUNTIME_DIR" "$RUNTIME_BACKUP_DIR"
+  echo "Backed up previous Hermes runtime: $RUNTIME_BACKUP_DIR"
+  mkdir -p "$RUNTIME_DIR"
+}
+
+generate_api_server_key() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
+  printf '\n'
+}
+
+dotenv_value_is_weak() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [ "${#value}" -ge 2 ]; then
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+  fi
+  [ -z "$value" ] || [ "$value" = "clawpanel-local" ] || [ "${#value}" -lt 16 ]
+}
+
+ensure_api_server_key() {
+  local env_path="$1"
+  local existing_value=""
+  local line
+  if [ -f "$env_path" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [[ "$line" =~ ^[[:space:]]*API_SERVER_KEY[[:space:]]*= ]]; then
+        existing_value="${line#*=}"
+      fi
+    done < "$env_path"
+  fi
+
+  if ! dotenv_value_is_weak "$existing_value"; then
+    return
+  fi
+
+  local new_key
+  local tmp_path
+  new_key="$(generate_api_server_key)"
+  tmp_path="${env_path}.tmp.$$"
+  if [ -f "$env_path" ]; then
+    grep -vE '^[[:space:]]*API_SERVER_KEY[[:space:]]*=' "$env_path" > "$tmp_path" || true
+  else
+    : > "$tmp_path"
+  fi
+  if [ -s "$tmp_path" ] && [ "$(tail -c 1 "$tmp_path")" != "" ]; then
+    printf '\n' >> "$tmp_path"
+  fi
+  printf 'API_SERVER_KEY=%s\n' "$new_key" >> "$tmp_path"
+  mv "$tmp_path" "$env_path"
+  echo "Generated a strong API_SERVER_KEY in $env_path."
+}
 
 sync_bundled_skills() {
   mkdir -p "$HERMES_HOME/skills"
@@ -370,6 +472,8 @@ if [ ! -d "$BUNDLE_DIR/hermes-resources" ]; then
   exit 1
 fi
 
+trap restore_runtime_on_error ERR
+backup_existing_runtime
 rm -rf "$RUNTIME_WHEELHOUSE" "$RUNTIME_TEMPLATES" "$RUNTIME_BUNDLE" "$RUNTIME_RESOURCES" "$VENV_DIR"
 cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_WHEELHOUSE"
 cp -R "$BUNDLE_DIR/templates" "$RUNTIME_TEMPLATES"
@@ -491,9 +595,15 @@ configure_default_config "$HERMES_HOME/config.yaml"
 if [ ! -f "$HERMES_HOME/.env" ]; then
   cp "$RUNTIME_TEMPLATES/env.template" "$HERMES_HOME/.env"
 fi
+ensure_api_server_key "$HERMES_HOME/.env"
 
 sync_bundled_skills
 "$BIN_DIR/hermes" version
+RUNTIME_INSTALL_COMMITTED=1
+trap - ERR
+if [ -n "$RUNTIME_BACKUP_DIR" ] && [ -d "$RUNTIME_BACKUP_DIR" ]; then
+  rm -rf "$RUNTIME_BACKUP_DIR" || echo "Hermes was upgraded, but the previous runtime backup could not be removed: $RUNTIME_BACKUP_DIR" >&2
+fi
 
 echo "Hermes Agent 已安装。"
 echo "shim: $BIN_DIR/hermes"

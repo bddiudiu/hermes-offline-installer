@@ -124,15 +124,10 @@ function Get-HermesProcesses {
       (Test-ProcessMatchesPath -Value $ExecutablePath -Paths $MatchPaths) -or
       (Test-ProcessMatchesPath -Value $CommandLine -Paths $MatchPaths)
     )
-    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and ($MatchesKnownPath -or (
-      $CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-    ))) {
+    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and $MatchesKnownPath) {
       return $true
     }
-    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and (
-      $MatchesKnownPath -or
-      ($CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-    )) {
+    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and $MatchesKnownPath) {
       return $true
     }
     return $false

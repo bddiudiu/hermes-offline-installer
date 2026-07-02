@@ -35,6 +35,14 @@ grep -qE '^[[:space:]]+-[[:space:]]*qwen3([[:space:]]*#.*)?$|^[[:space:]]+models
 grep -q 'api_server:' "$CONFIG" || { echo "config.yaml 缺少 api_server 配置" >&2; exit 1; }
 grep -qE '^[[:space:]]+port:[[:space:]]*[^#[:space:]]+' "$CONFIG" || { echo "config.yaml 缺少 API server port 配置" >&2; exit 1; }
 [ -f "$ENV_FILE" ] || { echo "缺少 .env" >&2; exit 1; }
+api_server_key="$(
+  { grep -E '^[[:space:]]*API_SERVER_KEY[[:space:]]*=' "$ENV_FILE" || true; } | tail -n 1 |
+    sed -E "s/^[^=]*=//; s/^[[:space:]]*//; s/[[:space:]]*$//; s/^\"//; s/\"$//; s/^'//; s/'$//"
+)"
+if [ -z "$api_server_key" ] || [ "$api_server_key" = "clawpanel-local" ] || [ "${#api_server_key}" -lt 16 ]; then
+  echo ".env 中 API_SERVER_KEY 缺失或仍为弱占位符" >&2
+  exit 1
+fi
 [ -d "$SKILLS_DIR" ] || { echo "缺少 Agent Skills 目录: $SKILLS_DIR" >&2; exit 1; }
 find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {
   echo "Agent Skills 目录中缺少 SKILL.md: $SKILLS_DIR" >&2

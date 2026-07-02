@@ -86,6 +86,115 @@ function Test-IsAdministrator {
   return $Principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-CurrentUserSid {
+  return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Get-InstallerTargetUserSid {
+  $Sid = $env:HERMES_INSTALLER_USER_SID
+  if ($Sid -and $Sid -match '^S-\d-\d+-.+') {
+    return $Sid
+  }
+  return Get-CurrentUserSid
+}
+
+function Get-UserProfilePathFromSid {
+  param(
+    [string] $Sid
+  )
+
+  try {
+    $ProfileListPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$Sid"
+    $ProfileImagePath = (Get-ItemProperty -Path $ProfileListPath -Name "ProfileImagePath" -ErrorAction Stop).ProfileImagePath
+    if ($ProfileImagePath) {
+      return [Environment]::ExpandEnvironmentVariables($ProfileImagePath)
+    }
+  } catch {
+  }
+  return $env:USERPROFILE
+}
+
+function Open-TargetUserEnvironmentKey {
+  param(
+    [bool] $Writable
+  )
+
+  $UsersRoot = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::Users,
+    [Microsoft.Win32.RegistryView]::Default
+  )
+  try {
+    $KeyPath = "$TargetUserSid\Environment"
+    $Key = if ($Writable) {
+      $UsersRoot.CreateSubKey($KeyPath)
+    } else {
+      $UsersRoot.OpenSubKey($KeyPath, $false)
+    }
+    if (-not $Key) {
+      throw "Could not open HKEY_USERS\$KeyPath"
+    }
+    return $Key
+  } finally {
+    $UsersRoot.Dispose()
+  }
+}
+
+function Get-TargetUserEnvironmentVariable {
+  param(
+    [string] $Name,
+    [switch] $DoNotExpand
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $false
+  try {
+    if ($DoNotExpand) {
+      return $Key.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    }
+    return $Key.GetValue($Name, $null)
+  } finally {
+    $Key.Dispose()
+  }
+}
+
+function Get-TargetUserEnvironmentValueKind {
+  param(
+    [string] $Name
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $false
+  try {
+    try {
+      return $Key.GetValueKind($Name)
+    } catch {
+      return [Microsoft.Win32.RegistryValueKind]::String
+    }
+  } finally {
+    $Key.Dispose()
+  }
+}
+
+function Set-TargetUserEnvironmentVariable {
+  param(
+    [string] $Name,
+    [AllowNull()] [string] $Value,
+    [Microsoft.Win32.RegistryValueKind] $Kind = [Microsoft.Win32.RegistryValueKind]::String
+  )
+
+  $Key = Open-TargetUserEnvironmentKey -Writable $true
+  try {
+    if ($null -eq $Value) {
+      try {
+        $Key.DeleteValue($Name, $false)
+      } catch {
+      }
+      return
+    }
+    $Key.SetValue($Name, $Value, $Kind)
+  } finally {
+    $Key.Dispose()
+  }
+}
+
 function Grant-HermesHomeAccess {
   param(
     [string] $Path
@@ -106,8 +215,14 @@ $DefaultHermesHome = Get-WindowsDefaultHermesHome
 $DefaultInstallRoot = Get-WindowsDefaultHermesOfflineHome
 $DefaultProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
 $DefaultProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
-$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
-$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
+$CurrentUserSid = Get-CurrentUserSid
+$TargetUserSid = Get-InstallerTargetUserSid
+$TargetUserProfile = Get-UserProfilePathFromSid -Sid $TargetUserSid
+if ($TargetUserSid -ne $CurrentUserSid) {
+  Write-Host "Writing User environment variables for original installer user SID: $TargetUserSid"
+}
+$LegacyHermesHome = Join-Path $TargetUserProfile ".hermes"
+$LegacyInstallRoot = Join-Path $TargetUserProfile ".hermes-offline"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
 $CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
   $env:HERMES_OFFLINE_HOME
@@ -193,15 +308,10 @@ function Stop-ExistingHermesProcesses {
       (Test-ProcessMatchesPath -Value $ExecutablePath -Paths $MatchPaths) -or
       (Test-ProcessMatchesPath -Value $CommandLine -Paths $MatchPaths)
     )
-    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and ($MatchesKnownPath -or (
-      $CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-    ))) {
+    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and $MatchesKnownPath) {
       return $true
     }
-    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and (
-      $MatchesKnownPath -or
-      ($CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-    )) {
+    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and $MatchesKnownPath) {
       return $true
     }
     return $false
@@ -263,6 +373,40 @@ function Remove-InstallPath {
   if (Test-Path $Path) {
     throw "Could not remove $Path. Please close Hermes/ClawPanel and rerun install.cmd."
   }
+}
+
+function New-BackupPath {
+  param(
+    [string] $Path,
+    [string] $Label
+  )
+
+  $Parent = Split-Path -Parent $Path
+  $Name = Split-Path -Leaf $Path
+  $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
+  $Candidate = Join-Path $Parent "$Name.$Label.$Timestamp"
+  $Index = 0
+  while (Test-Path $Candidate) {
+    $Index++
+    $Candidate = Join-Path $Parent "$Name.$Label.$Timestamp.$Index"
+  }
+  return $Candidate
+}
+
+function Restore-RuntimeBackup {
+  param(
+    [string] $RuntimeDir,
+    [AllowNull()] [string] $RuntimeBackupDir
+  )
+
+  if (-not $RuntimeBackupDir -or -not (Test-Path $RuntimeBackupDir)) {
+    return
+  }
+  if (Test-Path $RuntimeDir) {
+    Remove-InstallPath -Path $RuntimeDir
+  }
+  Move-Item -Force $RuntimeBackupDir $RuntimeDir
+  Write-Host "Restored previous Hermes runtime: $RuntimeDir"
 }
 
 function Clear-PythonRuntimeEnvironment {
@@ -543,10 +687,11 @@ function Remove-UserPathEntries {
     [string[]] $Paths
   )
 
-  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $UserPath = Get-TargetUserEnvironmentVariable -Name "Path" -DoNotExpand
   if (-not $UserPath) {
     return
   }
+  $UserPathKind = Get-TargetUserEnvironmentValueKind -Name "Path"
 
   $ComparablePaths = @($Paths | Where-Object { $_ } | ForEach-Object {
     ConvertTo-ComparablePath -Path $_
@@ -573,7 +718,7 @@ function Remove-UserPathEntries {
     }
   }
 
-  [Environment]::SetEnvironmentVariable("Path", ($PathParts | Select-Object -Unique) -join ";", "User")
+  Set-TargetUserEnvironmentVariable -Name "Path" -Value (($PathParts | Select-Object -Unique) -join ";") -Kind $UserPathKind
 }
 
 function Remove-HermesExeShim {
@@ -1072,6 +1217,69 @@ function Get-DotEnvValue {
   return $null
 }
 
+function New-HexSecret {
+  $Bytes = New-Object byte[] 32
+  $Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $Rng.GetBytes($Bytes)
+  } finally {
+    $Rng.Dispose()
+  }
+  return ([System.BitConverter]::ToString($Bytes)).Replace("-", "").ToLowerInvariant()
+}
+
+function Test-WeakApiServerKey {
+  param(
+    [AllowNull()] [string] $Value
+  )
+
+  if (-not $Value) {
+    return $true
+  }
+  $Trimmed = $Value.Trim()
+  if ($Trimmed.Length -ge 2) {
+    $First = $Trimmed.Substring(0, 1)
+    $Last = $Trimmed.Substring($Trimmed.Length - 1, 1)
+    if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
+      $Trimmed = $Trimmed.Substring(1, $Trimmed.Length - 2)
+    }
+  }
+  return ($Trimmed -eq "clawpanel-local" -or $Trimmed.Length -lt 16)
+}
+
+function Ensure-ApiServerKey {
+  param(
+    [string] $EnvPath
+  )
+
+  $Lines = @()
+  if (Test-Path $EnvPath) {
+    $Lines = @(Get-Content -Path $EnvPath -Encoding UTF8 -ErrorAction Stop)
+  }
+
+  $ExistingValue = $null
+  foreach ($Line in $Lines) {
+    if ($Line -match '^\s*API_SERVER_KEY\s*=\s*(.*)$') {
+      $ExistingValue = $Matches[1].Trim()
+    }
+  }
+
+  if (-not (Test-WeakApiServerKey -Value $ExistingValue)) {
+    return
+  }
+
+  $FilteredLines = @($Lines | Where-Object { $_ -notmatch '^\s*API_SERVER_KEY\s*=' })
+  $NewKey = New-HexSecret
+  $OutputLines = @()
+  $OutputLines += $FilteredLines
+  if ($OutputLines.Count -gt 0 -and $OutputLines[$OutputLines.Count - 1] -ne "") {
+    $OutputLines += ""
+  }
+  $OutputLines += "API_SERVER_KEY=$NewKey"
+  Write-Utf8NoBomLines -Path $EnvPath -Lines $OutputLines
+  Write-Host "Generated a strong API_SERVER_KEY in $EnvPath."
+}
+
 function Import-ZhanClawEnvironmentFromLegacyDotEnv {
   param(
     [string[]] $EnvPaths,
@@ -1094,7 +1302,7 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
     if ([Environment]::GetEnvironmentVariable($Target, "Process")) {
       continue
     }
-    if (-not $PortableMode -and [Environment]::GetEnvironmentVariable($Target, "User")) {
+    if (-not $PortableMode -and (Get-TargetUserEnvironmentVariable -Name $Target)) {
       continue
     }
     $LegacyNames = [string[]] $Mapping["Legacy"]
@@ -1113,7 +1321,7 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
     }
     Set-Item -Path ("Env:{0}" -f $Target) -Value $Value
     if (-not $PortableMode) {
-      [Environment]::SetEnvironmentVariable($Target, $Value, "User")
+      Set-TargetUserEnvironmentVariable -Name $Target -Value $Value
     }
     $SourceLabel = ($LegacyNames | Where-Object { $_ -ne $Target }) -join "/"
     Write-Host "Migrated $Target from legacy .env model setting ($SourceLabel)."
@@ -1341,7 +1549,7 @@ if ($PortableMode) {
   Write-Host "Windows install root: $InstallRoot"
   Write-Host "Windows Hermes home: $HermesHome"
 }
-$InstallDirs = @($RuntimeDir, $HermesHome) + $ShimDirs
+$InstallDirs = @($HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
 if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
   Grant-HermesHomeAccess -Path $HermesHome
@@ -1356,8 +1564,21 @@ if (-not (Test-Path $BundledResources)) {
   throw "Missing Hermes runtime resources: $BundledResources"
 }
 
+$RuntimeBackupDir = $null
+$RuntimeInstallCommitted = $false
+$RuntimeRebuildStarted = $false
+try {
 Stop-ExistingHermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ProcessShimDirs
 Remove-HermesShimFiles -ShimDirs $LegacyShimDirs
+if (Test-Path $RuntimeDir) {
+  $RuntimeBackupDir = New-BackupPath -Path $RuntimeDir -Label "old"
+  Move-Item -Force $RuntimeDir $RuntimeBackupDir
+  $RuntimeRebuildStarted = $true
+  Write-Host "Backed up previous Hermes runtime: $RuntimeBackupDir"
+} else {
+  $RuntimeRebuildStarted = $true
+}
+New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $RuntimeResources, $VenvDir)) {
   Remove-InstallPath -Path $Path
 }
@@ -1559,7 +1780,7 @@ $HermesCmd = Join-Path $BinDir "hermes.cmd"
 foreach ($Entry in $HermesInstallerEnvironment.GetEnumerator()) {
   Set-Item -Path ("Env:{0}" -f $Entry.Key) -Value $Entry.Value
   if (-not $PortableMode) {
-    [Environment]::SetEnvironmentVariable($Entry.Key, $Entry.Value, "User")
+    Set-TargetUserEnvironmentVariable -Name $Entry.Key -Value $Entry.Value
   }
 }
 foreach ($Entry in $HermesDefaultEnvironment.GetEnumerator()) {
@@ -1569,7 +1790,7 @@ foreach ($Entry in $HermesDefaultEnvironment.GetEnumerator()) {
 }
 foreach ($ZhanEnvName in @("ZHANCLAW_BASE_URL", "ZHANCLAW_API_KEY")) {
   if (-not [Environment]::GetEnvironmentVariable($ZhanEnvName, "Process")) {
-    $ZhanEnvValue = [Environment]::GetEnvironmentVariable($ZhanEnvName, "User")
+    $ZhanEnvValue = Get-TargetUserEnvironmentVariable -Name $ZhanEnvName
     if ($ZhanEnvValue) {
       Set-Item -Path ("Env:{0}" -f $ZhanEnvName) -Value $ZhanEnvValue
     }
@@ -1594,6 +1815,7 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $Legacy
 if (-not (Test-Path $EnvPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "env.template") $EnvPath
 }
+Ensure-ApiServerKey -EnvPath $EnvPath
 $ZhanEnvImportPaths = @($EnvPath)
 if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnvPath)) {
   $ZhanEnvImportPaths += $LegacyEnvPath
@@ -1604,7 +1826,8 @@ Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot 
 
 if (-not $PortableMode) {
   Remove-UserPathEntries -Paths @($LegacyOfflineBinDir)
-  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $UserPath = Get-TargetUserEnvironmentVariable -Name "Path" -DoNotExpand
+  $UserPathKind = Get-TargetUserEnvironmentValueKind -Name "Path"
   if (($UserPath -split ";") -notcontains $BinDir) {
     $PathParts = @()
     if ($UserPath) {
@@ -1614,7 +1837,7 @@ if (-not $PortableMode) {
       $PathParts += $BinDir
     }
     $NewUserPath = ($PathParts | Select-Object -Unique) -join ";"
-    [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
+    Set-TargetUserEnvironmentVariable -Name "Path" -Value $NewUserPath -Kind $UserPathKind
   }
 }
 
@@ -1624,6 +1847,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Start-HermesDashboardAfterInstall -HermesCmd $HermesCmd -Port 9119
+
+$RuntimeInstallCommitted = $true
+if ($RuntimeBackupDir -and (Test-Path $RuntimeBackupDir)) {
+  try {
+    Remove-InstallPath -Path $RuntimeBackupDir
+  } catch {
+    Write-Warning "Hermes was upgraded, but the previous runtime backup could not be removed: $RuntimeBackupDir. Error: $($_.Exception.Message)"
+  }
+}
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
@@ -1642,4 +1874,15 @@ if ($PortableMode) {
   Write-Host "Use launch.cmd from this extracted folder to start Hermes without changing User PATH."
 } else {
   Write-Host "Please reopen PowerShell for PATH changes to take effect."
+}
+} catch {
+  if (-not $RuntimeInstallCommitted) {
+    Write-Warning "Hermes install/upgrade failed. Restoring the previous runtime if one was backed up."
+    if ($RuntimeBackupDir) {
+      Restore-RuntimeBackup -RuntimeDir $RuntimeDir -RuntimeBackupDir $RuntimeBackupDir
+    } elseif ($RuntimeRebuildStarted -and (Test-Path $RuntimeDir)) {
+      Remove-InstallPath -Path $RuntimeDir
+    }
+  }
+  throw
 }
