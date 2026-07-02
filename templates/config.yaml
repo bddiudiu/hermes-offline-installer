@@ -1,5 +1,5 @@
 model:
-  default: gpt-4o-mini
+  default: qwen3
   provider: custom:zhan_ai
 
 providers:

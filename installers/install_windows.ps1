@@ -872,7 +872,7 @@ function Ensure-ModelProviderLine {
   if ($ModelIndex -lt 0) {
     $Lines.Insert(0, "")
     $Lines.Insert(0, "  provider: custom:zhan_ai")
-    $Lines.Insert(0, "  default: gpt-4o-mini")
+    $Lines.Insert(0, "  default: qwen3")
     $Lines.Insert(0, "model:")
     return
   }
@@ -890,8 +890,13 @@ function Ensure-ModelProviderLine {
   }
 
   if ($DefaultIndex -lt 0) {
-    $Lines.Insert($ModelIndex + 1, "  default: gpt-4o-mini")
+    $Lines.Insert($ModelIndex + 1, "  default: qwen3")
     $ModelEnd++
+  } elseif (
+    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*([#].*)?$' -or
+    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*[''"]?gpt-4o-mini[''"]?\s*(#.*)?$'
+  ) {
+    $Lines[$DefaultIndex] = "  default: qwen3"
   }
 
   $ProviderIndex = -1

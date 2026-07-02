@@ -25,6 +25,11 @@ RESOURCES_DIR="${HERMES_OFFLINE_HOME}/runtime/hermes-resources"
 
 [ -x "$HERMES_BIN" ] || { echo "缺少 hermes shim: $HERMES_BIN" >&2; exit 1; }
 [ -f "$CONFIG" ] || { echo "缺少 config.yaml" >&2; exit 1; }
+grep -qE '^[[:space:]]+default:[[:space:]]*qwen3([[:space:]]*#.*)?$' "$CONFIG" || { echo "config.yaml 未默认选择 qwen3 模型" >&2; exit 1; }
+grep -qE '^[[:space:]]+provider:[[:space:]]*custom:zhan_ai([[:space:]]*#.*)?$' "$CONFIG" || { echo "config.yaml 未默认选择 zhan_ai 渠道" >&2; exit 1; }
+grep -q 'zhan_ai:' "$CONFIG" || { echo "config.yaml 缺少 zhan_ai provider 配置" >&2; exit 1; }
+grep -q 'ZHANCLAW_BASE_URL' "$CONFIG" || { echo "config.yaml 缺少 ZHANCLAW_BASE_URL 配置" >&2; exit 1; }
+grep -q 'ZHANCLAW_API_KEY' "$CONFIG" || { echo "config.yaml 缺少 ZHANCLAW_API_KEY 配置" >&2; exit 1; }
 ! grep -qE '^api_server_port:' "$CONFIG" || { echo "config.yaml 仍包含旧 api_server_port 配置" >&2; exit 1; }
 grep -q 'api_server:' "$CONFIG" || { echo "config.yaml 缺少 api_server 配置" >&2; exit 1; }
 grep -qE '^[[:space:]]+port:[[:space:]]*[^#[:space:]]+' "$CONFIG" || { echo "config.yaml 缺少 API server port 配置" >&2; exit 1; }

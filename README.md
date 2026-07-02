@@ -285,7 +285,7 @@ Then reopen PowerShell or CMD.
 
 ## Configuration
 
-The installer configures the default model provider as `zhan_ai`. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai` and `providers.zhan_ai` is present. Model service settings are read from Windows user environment variables:
+The installer configures the default model as `qwen3` through the `zhan_ai` provider. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai`, corrects the previous generated `gpt-4o-mini` default to `qwen3`, and keeps `providers.zhan_ai` present. Model service settings are read from Windows user environment variables:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")

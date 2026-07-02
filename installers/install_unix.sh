@@ -102,7 +102,7 @@ def nested_block_end(start, indent):
 def ensure_model_provider():
     model_index = find_top_level_key("model")
     if model_index < 0:
-        lines[0:0] = ["model:", "  default: gpt-4o-mini", "  provider: custom:zhan_ai", ""]
+        lines[0:0] = ["model:", "  default: qwen3", "  provider: custom:zhan_ai", ""]
         return
 
     model_end = top_level_block_end(model_index)
@@ -115,9 +115,14 @@ def ensure_model_provider():
             provider_index = index
 
     if default_index < 0:
-        lines.insert(model_index + 1, "  default: gpt-4o-mini")
+        lines.insert(model_index + 1, "  default: qwen3")
         model_end += 1
         default_index = model_index + 1
+    elif (
+        re.match(r"^\s+default\s*:\s*([#].*)?$", lines[default_index])
+        or re.match(r"^\s+default\s*:\s*['\"]?gpt-4o-mini['\"]?\s*(#.*)?$", lines[default_index])
+    ):
+        lines[default_index] = "  default: qwen3"
 
     provider_index = -1
     for index in range(model_index + 1, model_end):
