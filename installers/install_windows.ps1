@@ -198,7 +198,8 @@ function Set-TargetUserEnvironmentVariable {
 function Set-HermesHomeAccess {
   param(
     [string] $Path,
-    [string] $UserSid
+    [string] $UserSid,
+    [string] $CurrentSid
   )
 
   if (-not (Get-Command icacls.exe -ErrorAction SilentlyContinue)) {
@@ -218,10 +219,18 @@ function Set-HermesHomeAccess {
 
   $SystemGrant = "*S-1-5-18:(OI)(CI)F"
   $AdminGrant = "*S-1-5-32-544:(OI)(CI)F"
-  $TargetUserGrant = "*{0}:(OI)(CI)M" -f $UserSid
-  & icacls.exe $Path /grant:r $SystemGrant $AdminGrant $TargetUserGrant /T /C | Out-Null
+  & icacls.exe $Path /grant:r $SystemGrant $AdminGrant /T /C | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not grant restricted Hermes home access to $Path. Hermes may need administrator rights to write config or state."
+    Write-Warning "Could not grant system and administrator access to $Path."
+  }
+
+  $UserSids = @($UserSid, $CurrentSid) | Where-Object { $_ } | Select-Object -Unique
+  foreach ($Sid in $UserSids) {
+    $UserGrant = "*{0}:(OI)(CI)M" -f $Sid
+    & icacls.exe $Path /grant:r $UserGrant /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Could not grant Hermes home access to user SID $Sid. Hermes may not be able to read config or .env for that user."
+    }
   }
 
   & icacls.exe $Path /grant "*S-1-5-32-545:RX" /C | Out-Null
@@ -1453,7 +1462,7 @@ Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPaths $ZhanEnvImportPaths -Portab
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
 if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
-  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid
+  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid -CurrentSid $CurrentUserSid
 }
 
 if (-not $PortableMode) {
