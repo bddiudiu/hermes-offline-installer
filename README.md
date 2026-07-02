@@ -292,7 +292,7 @@ The installer configures the default model as `qwen3` through the `zhan_ai` prov
 [Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
 
-After setting them, restart any already-running ClawPanel / Hermes gateway process. New Windows shim launches also refresh `ZHANCLAW_BASE_URL` and `ZHANCLAW_API_KEY` from the current User environment. `$HERMES_HOME/.env` remains for non-model installer settings and does not store `ZHANCLAW_API_KEY`.
+After setting them, restart any already-running ClawPanel / Hermes gateway process. New Windows shim launches also refresh `ZHANCLAW_BASE_URL` and `ZHANCLAW_API_KEY` from the current User environment. When upgrading from older builds, the installer migrates legacy `.env` values (`CUSTOM_BASE_URL` / `OPENAI_BASE_URL` and `CUSTOM_API_KEY` / `OPENAI_API_KEY`) into the matching `ZHANCLAW_*` User environment variables if they are not already set. `$HERMES_HOME/.env` remains for non-model installer settings and does not store new `ZHANCLAW_API_KEY` values.
 
 ## Notes
 

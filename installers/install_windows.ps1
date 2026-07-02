@@ -1031,6 +1031,86 @@ function Ensure-ZhanAiProviderBlock {
   }
 }
 
+function Get-DotEnvValue {
+  param(
+    [string] $Path,
+    [string[]] $Names
+  )
+
+  if (-not (Test-Path $Path)) {
+    return $null
+  }
+
+  $NameSet = @{}
+  foreach ($Name in $Names) {
+    if ($Name) {
+      $NameSet[$Name.ToUpperInvariant()] = $true
+    }
+  }
+
+  foreach ($Line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
+    if ($Line -notmatch '^\s*([^#=\s]+)\s*=\s*(.*)$') {
+      continue
+    }
+    $Key = $Matches[1].Trim().ToUpperInvariant()
+    if (-not $NameSet.ContainsKey($Key)) {
+      continue
+    }
+    $Value = $Matches[2].Trim()
+    if ($Value.Length -ge 2) {
+      $First = $Value.Substring(0, 1)
+      $Last = $Value.Substring($Value.Length - 1, 1)
+      if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
+        $Value = $Value.Substring(1, $Value.Length - 2)
+      }
+    }
+    if ($Value) {
+      return $Value
+    }
+  }
+
+  return $null
+}
+
+function Import-ZhanClawEnvironmentFromLegacyDotEnv {
+  param(
+    [string] $EnvPath,
+    [bool] $PortableMode
+  )
+
+  $Mappings = @(
+    @{
+      Target = "ZHANCLAW_BASE_URL"
+      Legacy = @("ZHANCLAW_BASE_URL", "CUSTOM_BASE_URL", "OPENAI_BASE_URL")
+    },
+    @{
+      Target = "ZHANCLAW_API_KEY"
+      Legacy = @("ZHANCLAW_API_KEY", "CUSTOM_API_KEY", "OPENAI_API_KEY")
+    }
+  )
+
+  foreach ($Mapping in $Mappings) {
+    $Target = [string] $Mapping["Target"]
+    if ([Environment]::GetEnvironmentVariable($Target, "Process")) {
+      continue
+    }
+    if (-not $PortableMode -and [Environment]::GetEnvironmentVariable($Target, "User")) {
+      continue
+    }
+    $LegacyNames = [string[]] $Mapping["Legacy"]
+    $Value = Get-DotEnvValue -Path $EnvPath -Names $LegacyNames
+    if (-not $Value) {
+      continue
+    }
+    Set-Item -Path ("Env:{0}" -f $Target) -Value $Value
+    if (-not $PortableMode) {
+      [Environment]::SetEnvironmentVariable($Target, $Value, "User")
+    }
+    $SourceLabel = ($LegacyNames | Where-Object { $_ -ne $Target }) -join "/"
+    Write-Host "Migrated $Target from legacy .env model setting ($SourceLabel)."
+  }
+}
+
 function Remove-LegacyApiServerPort {
   param(
     [System.Collections.Generic.List[string]] $Lines
@@ -1480,6 +1560,7 @@ $EnvPath = Join-Path $HermesHome ".env"
 if (-not (Test-Path $EnvPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "env.template") $EnvPath
 }
+Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPath $EnvPath -PortableMode $PortableMode
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
 

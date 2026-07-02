@@ -292,7 +292,7 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 [Environment]::SetEnvironmentVariable("ZHANCLAW_API_KEY", "your-api-key", "User")
 ```
 
-设置完成后重启已经在运行的 ClawPanel / Hermes gateway。新的 Windows shim 启动时也会从当前用户环境刷新 `ZHANCLAW_BASE_URL` 和 `ZHANCLAW_API_KEY`。`$HERMES_HOME/.env` 仍只保存安装包自身需要的非模型密钥配置，不写入 `ZHANCLAW_API_KEY`。
+设置完成后重启已经在运行的 ClawPanel / Hermes gateway。新的 Windows shim 启动时也会从当前用户环境刷新 `ZHANCLAW_BASE_URL` 和 `ZHANCLAW_API_KEY`。从旧版本升级时，如果 `.env` 里已有 `CUSTOM_BASE_URL` / `OPENAI_BASE_URL` 或 `CUSTOM_API_KEY` / `OPENAI_API_KEY`，安装器会在 `ZHANCLAW_*` 尚未设置时迁移到对应的 Windows 用户环境变量。`$HERMES_HOME/.env` 仍只保存安装包自身需要的非模型密钥配置，不写入新的 `ZHANCLAW_API_KEY`。
 
 ## 说明
 
