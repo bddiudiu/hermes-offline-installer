@@ -25,6 +25,9 @@ RESOURCES_DIR="${HERMES_OFFLINE_HOME}/runtime/hermes-resources"
 
 [ -x "$HERMES_BIN" ] || { echo "缺少 hermes shim: $HERMES_BIN" >&2; exit 1; }
 [ -f "$CONFIG" ] || { echo "缺少 config.yaml" >&2; exit 1; }
+! grep -qE '^api_server_port:' "$CONFIG" || { echo "config.yaml 仍包含旧 api_server_port 配置" >&2; exit 1; }
+grep -q 'api_server:' "$CONFIG" || { echo "config.yaml 缺少 api_server 配置" >&2; exit 1; }
+grep -qE '^[[:space:]]+port:[[:space:]]*[^#[:space:]]+' "$CONFIG" || { echo "config.yaml 缺少 API server port 配置" >&2; exit 1; }
 [ -f "$ENV_FILE" ] || { echo "缺少 .env" >&2; exit 1; }
 [ -d "$SKILLS_DIR" ] || { echo "缺少 Agent Skills 目录: $SKILLS_DIR" >&2; exit 1; }
 find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {

@@ -113,7 +113,7 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
     if platform_name.startswith("win"):
         env["PYTHONHOME"] = str(python.parent)
     subprocess.run(
-        [str(python), "-c", "import encodings, venv"],
+        [str(python), "-c", "import encodings, ensurepip, venv"],
         check=True,
         cwd=bundle,
         env=env,

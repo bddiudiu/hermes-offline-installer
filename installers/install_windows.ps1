@@ -281,10 +281,61 @@ function Test-BundledPythonRuntime {
     $env:PYTHONHOME = $PythonHome
   }
 
-  & $PythonBin -c "import encodings, venv"
+  & $PythonBin -c "import encodings, ensurepip, venv"
   $Succeeded = ($LASTEXITCODE -eq 0)
   Clear-PythonRuntimeEnvironment
   return $Succeeded
+}
+
+function Invoke-HermesVenvAttempt {
+  param(
+    [string] $PythonBin,
+    [string] $VenvDir,
+    [AllowNull()] [string] $PythonHome
+  )
+
+  Clear-PythonRuntimeEnvironment
+  if ($PythonHome) {
+    $env:PYTHONHOME = $PythonHome
+  }
+  Remove-InstallPath -Path $VenvDir
+  & $PythonBin -m venv --without-pip $VenvDir
+  $VenvExitCode = $LASTEXITCODE
+  Clear-PythonRuntimeEnvironment
+  if ($VenvExitCode -ne 0) {
+    return [pscustomobject]@{
+      Succeeded = $false
+      Stage = "venv"
+      Summary = "venv exit code $VenvExitCode"
+      Details = ""
+    }
+  }
+
+  $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+  try {
+    Invoke-HermesEnsurePip -VenvPython $VenvPython -PythonHome $PythonHome
+    return [pscustomobject]@{
+      Succeeded = $true
+      Stage = "complete"
+      Summary = "ok"
+      Details = ""
+    }
+  } catch {
+    $Message = $_.Exception.Message
+    $FirstLine = $Message
+    $LineBreakIndex = $FirstLine.IndexOf("`n")
+    if ($LineBreakIndex -ge 0) {
+      $FirstLine = $FirstLine.Substring(0, $LineBreakIndex).TrimEnd("`r")
+    }
+    return [pscustomobject]@{
+      Succeeded = $false
+      Stage = "ensurepip"
+      Summary = "ensurepip failed: $FirstLine"
+      Details = $Message
+    }
+  } finally {
+    Clear-PythonRuntimeEnvironment
+  }
 }
 
 function New-HermesVenv {
@@ -294,39 +345,98 @@ function New-HermesVenv {
     [AllowNull()] [string] $FallbackPythonHome
   )
 
-  Clear-PythonRuntimeEnvironment
-  Remove-InstallPath -Path $VenvDir
-  & $PythonBin -m venv $VenvDir
-  if ($LASTEXITCODE -eq 0) {
+  $FirstResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
+  if ($FirstResult.Succeeded) {
     return
   }
 
-  $FirstExitCode = $LASTEXITCODE
-  Write-Warning "Python venv creation failed with exit code $FirstExitCode using a clean Python environment. Retrying once after recreating $VenvDir."
-  Clear-PythonRuntimeEnvironment
-  Remove-InstallPath -Path $VenvDir
+  Write-Warning "Python venv bootstrap failed using a clean Python environment ($($FirstResult.Summary)). Retrying once after recreating $VenvDir."
   Start-Sleep -Seconds 1
-  & $PythonBin -m venv $VenvDir
-  if ($LASTEXITCODE -eq 0) {
+  $SecondResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
+  if ($SecondResult.Succeeded) {
     return
   }
 
-  $SecondExitCode = $LASTEXITCODE
   if ($FallbackPythonHome) {
-    Write-Warning "Python venv creation failed again with exit code $SecondExitCode. Retrying with PYTHONHOME=$FallbackPythonHome for this process only."
-    Clear-PythonRuntimeEnvironment
-    $env:PYTHONHOME = $FallbackPythonHome
-    Remove-InstallPath -Path $VenvDir
-    & $PythonBin -m venv $VenvDir
-    $ThirdExitCode = $LASTEXITCODE
-    Clear-PythonRuntimeEnvironment
-    if ($ThirdExitCode -eq 0) {
+    Write-Warning "Python venv bootstrap failed again ($($SecondResult.Summary)). Retrying with PYTHONHOME=$FallbackPythonHome for this process only."
+    $ThirdResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $FallbackPythonHome
+    if ($ThirdResult.Succeeded) {
       return
     }
-    throw "Python venv creation failed. clean exit codes: $FirstExitCode, $SecondExitCode; PYTHONHOME retry exit code: $ThirdExitCode; python: $PythonBin; target: $VenvDir"
+    throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); PYTHONHOME retry: $($ThirdResult.Summary); python: $PythonBin; target: $VenvDir"
   }
 
-  throw "Python venv creation failed. clean exit codes: $FirstExitCode, $SecondExitCode; python: $PythonBin; target: $VenvDir"
+  throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); python: $PythonBin; target: $VenvDir"
+}
+
+function Invoke-NativeCommandCaptured {
+  param(
+    [string] $FilePath,
+    [string[]] $Arguments
+  )
+
+  $StdoutPath = [System.IO.Path]::GetTempFileName()
+  $StderrPath = [System.IO.Path]::GetTempFileName()
+  try {
+    $Process = Start-Process `
+      -FilePath $FilePath `
+      -ArgumentList $Arguments `
+      -NoNewWindow `
+      -Wait `
+      -PassThru `
+      -RedirectStandardOutput $StdoutPath `
+      -RedirectStandardError $StderrPath
+    $Output = @()
+    if (Test-Path $StdoutPath) {
+      $Output += @(Get-Content -Path $StdoutPath -ErrorAction SilentlyContinue)
+    }
+    if (Test-Path $StderrPath) {
+      $Output += @(Get-Content -Path $StderrPath -ErrorAction SilentlyContinue)
+    }
+    return [pscustomobject]@{
+      ExitCode = $Process.ExitCode
+      Output = $Output
+    }
+  } finally {
+    Remove-Item -Force $StdoutPath, $StderrPath -ErrorAction SilentlyContinue
+  }
+}
+
+function Invoke-HermesEnsurePip {
+  param(
+    [string] $VenvPython,
+    [AllowNull()] [string] $PythonHome
+  )
+
+  if (-not (Test-Path $VenvPython)) {
+    throw "Python venv executable was not created: $VenvPython"
+  }
+
+  $LastResult = $null
+  for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+    Clear-PythonRuntimeEnvironment
+    if ($PythonHome) {
+      $env:PYTHONHOME = $PythonHome
+    }
+    $LastResult = Invoke-NativeCommandCaptured `
+      -FilePath $VenvPython `
+      -Arguments @("-m", "ensurepip", "--upgrade", "--default-pip")
+    Clear-PythonRuntimeEnvironment
+    if ($LastResult.ExitCode -eq 0) {
+      return
+    }
+    if ($Attempt -lt 3) {
+      $NextAttempt = $Attempt + 1
+      Write-Warning "Python ensurepip failed with exit code $($LastResult.ExitCode). Retrying attempt $NextAttempt of 3 ..."
+      Start-Sleep -Seconds $Attempt
+    }
+  }
+
+  $Details = ""
+  if ($LastResult -and $LastResult.Output) {
+    $Details = (($LastResult.Output | Select-Object -Last 30) -join "`n")
+  }
+  throw "Python ensurepip failed after 3 attempts with exit code $($LastResult.ExitCode). python: $VenvPython`n$Details"
 }
 
 function Test-LocalTcpPort {
@@ -866,7 +976,158 @@ function Ensure-ZhanAiProviderBlock {
   }
 }
 
-function Set-ZhanAiDefaultModelConfig {
+function Remove-LegacyApiServerPort {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $Port = $null
+  for ($Index = $Lines.Count - 1; $Index -ge 0; $Index--) {
+    if ($Lines[$Index] -match '^api_server_port\s*:\s*([^#]+)?') {
+      $Candidate = $Matches[1]
+      if ($Candidate -and $Candidate.Trim()) {
+        $Port = $Candidate.Trim()
+      }
+      $Lines.RemoveAt($Index)
+    }
+  }
+  return $Port
+}
+
+function Ensure-ApiServerPlatformConfig {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [AllowNull()] [string] $Port
+  )
+
+  $EffectivePort = if ($Port) { $Port } else { "8642" }
+
+  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
+  if ($PlatformsIndex -lt 0) {
+    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
+      [void] $Lines.Add("")
+    }
+    [void] $Lines.Add("platforms:")
+    [void] $Lines.Add("  api_server:")
+    [void] $Lines.Add("    enabled: true")
+    [void] $Lines.Add("    extra:")
+    [void] $Lines.Add("      port: $EffectivePort")
+    return
+  }
+
+  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
+  $ApiServerIndex = -1
+  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
+      $ApiServerIndex = $Index
+      break
+    }
+  }
+
+  if ($ApiServerIndex -lt 0) {
+    $Lines.Insert($PlatformsIndex + 1, "      port: $EffectivePort")
+    $Lines.Insert($PlatformsIndex + 1, "    extra:")
+    $Lines.Insert($PlatformsIndex + 1, "    enabled: true")
+    $Lines.Insert($PlatformsIndex + 1, "  api_server:")
+    return
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $EnabledIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}enabled\s*:') {
+      $EnabledIndex = $Index
+      break
+    }
+  }
+  if ($EnabledIndex -ge 0) {
+    $Lines[$EnabledIndex] = "    enabled: true"
+  } else {
+    $Lines.Insert($ApiServerIndex + 1, "    enabled: true")
+    $EnabledIndex = $ApiServerIndex + 1
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $ExtraIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
+      $ExtraIndex = $Index
+      break
+    }
+  }
+
+  if ($ExtraIndex -lt 0) {
+    $InsertIndex = $EnabledIndex + 1
+    $Lines.Insert($InsertIndex, "    extra:")
+    $Lines.Insert($InsertIndex + 1, "      port: $EffectivePort")
+    return
+  }
+
+  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
+  $PortIndex = -1
+  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{6}port\s*:') {
+      $PortIndex = $Index
+      break
+    }
+  }
+  if ($PortIndex -ge 0) {
+    if ($Port) {
+      $Lines[$PortIndex] = "      port: $Port"
+    }
+  } else {
+    $Lines.Insert($ExtraIndex + 1, "      port: $EffectivePort")
+  }
+}
+
+function Get-ApiServerPlatformPort {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
+  if ($PlatformsIndex -lt 0) {
+    return $null
+  }
+
+  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
+  $ApiServerIndex = -1
+  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
+      $ApiServerIndex = $Index
+      break
+    }
+  }
+  if ($ApiServerIndex -lt 0) {
+    return $null
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $ExtraIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
+      $ExtraIndex = $Index
+      break
+    }
+  }
+  if ($ExtraIndex -lt 0) {
+    return $null
+  }
+
+  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
+  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{6}port\s*:\s*([^#]+)?') {
+      $Candidate = $Matches[1]
+      if ($Candidate -and $Candidate.Trim()) {
+        return $Candidate.Trim()
+      }
+      return $null
+    }
+  }
+  return $null
+}
+
+function Set-OfflineInstallerDefaultConfig {
   param(
     [string] $ConfigPath
   )
@@ -876,11 +1137,15 @@ function Set-ZhanAiDefaultModelConfig {
     $ConfigLines = @(Get-Content -Path $ConfigPath -ErrorAction Stop)
   }
   $MutableLines = New-StringList -Lines $ConfigLines
+  $LegacyApiServerPort = Remove-LegacyApiServerPort -Lines $MutableLines
   Ensure-ModelProviderLine -Lines $MutableLines
   Ensure-ZhanAiProviderBlock -Lines $MutableLines
+  Ensure-ApiServerPlatformConfig -Lines $MutableLines -Port $LegacyApiServerPort
+  $ApiServerPort = Get-ApiServerPlatformPort -Lines $MutableLines
   $OutputLines = $MutableLines.ToArray()
   Write-Utf8NoBomLines -Path $ConfigPath -Lines $OutputLines
   Write-Host "Configured default model provider: custom:zhan_ai"
+  Write-Host "Configured API server platform port: $ApiServerPort"
 }
 
 $ShimDirs = @($BinDir)
@@ -986,7 +1251,7 @@ if (-not (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $null)) {
     $PythonZip = Get-ChildItem -Path $BundledPythonHome -Filter "python*.zip" -File -ErrorAction SilentlyContinue | Select-Object -First 1
     $LibEncodings = Join-Path $BundledPythonHome "Lib\encodings"
     $PythonZipStatus = if ($PythonZip) { "$($PythonZip.FullName) exists=True" } else { "python*.zip exists=False" }
-    throw "Bundled Python failed to import encodings. PYTHONHOME=$BundledPythonHome; $PythonZipStatus; Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
+    throw "Bundled Python failed to import encodings, ensurepip, and venv. PYTHONHOME=$BundledPythonHome; $PythonZipStatus; Lib\encodings exists=$(Test-Path $LibEncodings); discovered encodings=$($EncodingsDir.FullName)"
   }
 }
 
@@ -1150,7 +1415,7 @@ $ConfigPath = Join-Path $HermesHome "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
-Set-ZhanAiDefaultModelConfig -ConfigPath $ConfigPath
+Set-OfflineInstallerDefaultConfig -ConfigPath $ConfigPath
 
 $EnvPath = Join-Path $HermesHome ".env"
 if (-not (Test-Path $EnvPath)) {

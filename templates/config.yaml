@@ -7,11 +7,6 @@ providers:
     api: "${ZHANCLAW_BASE_URL}"
     key_env: ZHANCLAW_API_KEY
 
-api_server_port: 8642
-
-dashboard:
-  port: 9119
-
 platform_toolsets:
   api_server:
     - hermes-api-server
@@ -22,3 +17,5 @@ terminal:
 platforms:
   api_server:
     enabled: true
+    extra:
+      port: 8642
