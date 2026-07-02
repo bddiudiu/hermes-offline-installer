@@ -56,7 +56,7 @@ function Test-PathUnderRoot {
 
 function Get-WindowsDefaultHermesHome {
   $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
-  return (Join-Path $ProgramDataRoot "SSC\ZhanClaw\Hermes")
+  return (Join-Path $ProgramDataRoot "SSC\Hermes")
 }
 
 function Get-WindowsDefaultHermesOfflineHome {
