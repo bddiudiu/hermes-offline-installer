@@ -1074,7 +1074,7 @@ function Get-DotEnvValue {
 
 function Import-ZhanClawEnvironmentFromLegacyDotEnv {
   param(
-    [string] $EnvPath,
+    [string[]] $EnvPaths,
     [bool] $PortableMode
   )
 
@@ -1098,7 +1098,16 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
       continue
     }
     $LegacyNames = [string[]] $Mapping["Legacy"]
-    $Value = Get-DotEnvValue -Path $EnvPath -Names $LegacyNames
+    $Value = $null
+    foreach ($EnvPath in $EnvPaths) {
+      if (-not $EnvPath) {
+        continue
+      }
+      $Value = Get-DotEnvValue -Path $EnvPath -Names $LegacyNames
+      if ($Value) {
+        break
+      }
+    }
     if (-not $Value) {
       continue
     }
@@ -1109,6 +1118,20 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
     $SourceLabel = ($LegacyNames | Where-Object { $_ -ne $Target }) -join "/"
     Write-Host "Migrated $Target from legacy .env model setting ($SourceLabel)."
   }
+}
+
+function Copy-LegacyHermesHomeFileIfMissing {
+  param(
+    [string] $TargetPath,
+    [string] $LegacyPath,
+    [string] $Label
+  )
+
+  if ((Test-Path $TargetPath) -or -not (Test-Path $LegacyPath)) {
+    return
+  }
+  Copy-Item -Force $LegacyPath $TargetPath
+  Write-Host "Migrated legacy Hermes $Label from $LegacyPath to $TargetPath."
 }
 
 function Remove-LegacyApiServerPort {
@@ -1551,16 +1574,28 @@ foreach ($ZhanEnvName in @("ZHANCLAW_BASE_URL", "ZHANCLAW_API_KEY")) {
 }
 
 $ConfigPath = Join-Path $HermesHome "config.yaml"
+$LegacyConfigPath = Join-Path $LegacyHermesHome "config.yaml"
+if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $LegacyHermesHome)) {
+  Copy-LegacyHermesHomeFileIfMissing -TargetPath $ConfigPath -LegacyPath $LegacyConfigPath -Label "config.yaml"
+}
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
 Set-OfflineInstallerDefaultConfig -ConfigPath $ConfigPath
 
 $EnvPath = Join-Path $HermesHome ".env"
+$LegacyEnvPath = Join-Path $LegacyHermesHome ".env"
+if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $LegacyHermesHome)) {
+  Copy-LegacyHermesHomeFileIfMissing -TargetPath $EnvPath -LegacyPath $LegacyEnvPath -Label ".env"
+}
 if (-not (Test-Path $EnvPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "env.template") $EnvPath
 }
-Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPath $EnvPath -PortableMode $PortableMode
+$ZhanEnvImportPaths = @($EnvPath)
+if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnvPath)) {
+  $ZhanEnvImportPaths += $LegacyEnvPath
+}
+Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPaths $ZhanEnvImportPaths -PortableMode $PortableMode
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
 
