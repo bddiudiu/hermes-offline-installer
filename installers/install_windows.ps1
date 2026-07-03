@@ -1686,6 +1686,11 @@ $TuiDir = Join-Path $RuntimeResources "tui_dist"
 $HermesCacheDir = Join-Path $HermesHome "cache"
 $HermesDefaultEnvironment = [ordered]@{
   "HERMES_DESKTOP_MANAGED" = "1"
+  "PIP_INDEX_URL" = "https://pypi.tuna.tsinghua.edu.cn/simple"
+  "UV_DEFAULT_INDEX" = "https://pypi.tuna.tsinghua.edu.cn/simple"
+  "HF_ENDPOINT" = "https://hf-mirror.com"
+  "PLAYWRIGHT_DOWNLOAD_HOST" = "https://npmmirror.com/mirrors/playwright"
+  "npm_config_registry" = "https://registry.npmmirror.com"
   "HF_HOME" = (Join-Path $HermesCacheDir "huggingface")
   "HUGGINGFACE_HUB_CACHE" = (Join-Path $HermesCacheDir "huggingface\hub")
   "TORCH_HOME" = (Join-Path $HermesCacheDir "torch")
@@ -1696,8 +1701,19 @@ $HermesDefaultEnvironment = [ordered]@{
   "TEMP" = (Join-Path $HermesCacheDir "tmp")
   "TMP" = (Join-Path $HermesCacheDir "tmp")
 }
+$HermesDefaultEnvironmentPathKeys = @(
+  "HF_HOME",
+  "HUGGINGFACE_HUB_CACHE",
+  "TORCH_HOME",
+  "TIKTOKEN_CACHE_DIR",
+  "MPLCONFIGDIR",
+  "NLTK_DATA",
+  "PLAYWRIGHT_BROWSERS_PATH",
+  "TEMP",
+  "TMP"
+)
 $HermesDefaultEnvironmentPathValues = @($HermesDefaultEnvironment.GetEnumerator() | Where-Object {
-  $_.Key -ne "HERMES_DESKTOP_MANAGED"
+  $_.Key -in $HermesDefaultEnvironmentPathKeys
 } | ForEach-Object { $_.Value })
 New-Item -ItemType Directory -Force -Path $HermesDefaultEnvironmentPathValues | Out-Null
 $HermesInstallerEnvironment = [ordered]@{

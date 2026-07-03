@@ -59,5 +59,11 @@ find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {
 [ -f "$RESOURCES_DIR/tui_dist/package.json" ] || { echo "缺少 Dashboard TUI package.json 资源" >&2; exit 1; }
 grep -q 'HERMES_OFFLINE_HOME' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_OFFLINE_HOME" >&2; exit 1; }
 grep -q 'HERMES_TUI_DIR' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_TUI_DIR" >&2; exit 1; }
+for mirror_env_name in PIP_INDEX_URL UV_DEFAULT_INDEX HF_ENDPOINT PLAYWRIGHT_DOWNLOAD_HOST npm_config_registry; do
+  grep -q "$mirror_env_name" "$HERMES_BIN" || {
+    echo "hermes shim 未设置大陆镜像默认环境变量: $mirror_env_name" >&2
+    exit 1
+  }
+done
 
 "$HERMES_BIN" version

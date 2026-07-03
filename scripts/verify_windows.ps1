@@ -138,6 +138,9 @@ foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cm
   if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
   if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
   if ($RequiredShimText -notmatch 'ZHANCLAW_BASE_URL' -or $RequiredShimText -notmatch 'ZHANCLAW_API_KEY') { throw "$RequiredShimName 未刷新 ZHANCLAW 用户环境变量" }
+  foreach ($MirrorEnvName in @("PIP_INDEX_URL", "UV_DEFAULT_INDEX", "HF_ENDPOINT", "PLAYWRIGHT_DOWNLOAD_HOST", "npm_config_registry")) {
+    if ($RequiredShimText -notmatch $MirrorEnvName) { throw "$RequiredShimName 未设置大陆镜像默认环境变量: $MirrorEnvName" }
+  }
 }
 if (-not $PortableMode) {
   foreach ($LegacyShimDir in $LegacyShimDirs) {

@@ -253,6 +253,7 @@ Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resource
 - Hermes config: `C:\ProgramData\SSC\Hermes\config.yaml` and `C:\ProgramData\SSC\Hermes\.env` on Windows, or `~/.hermes/config.yaml` and `~/.hermes/.env` on Unix; override with `HERMES_HOME`.
 - User plugins, skills, logs, and state follow `HERMES_HOME`.
 - Common third-party caches default to `$HERMES_HOME/cache` through the Hermes shims, including `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TORCH_HOME`, `TIKTOKEN_CACHE_DIR`, `MPLCONFIGDIR`, `NLTK_DATA`, `PLAYWRIGHT_BROWSERS_PATH`, and temp directories.
+- Hermes shims default common download sources to mainland China mirrors when the user has not already set them: `PIP_INDEX_URL` and `UV_DEFAULT_INDEX` use Tsinghua PyPI, `HF_ENDPOINT` uses `hf-mirror.com`, `PLAYWRIGHT_DOWNLOAD_HOST` uses npmmirror Playwright assets, and `npm_config_registry` uses npmmirror npm.
 - Bundled Agent Skills are restored from runtime resources during install or upgrade. User-modified or deleted skills are preserved according to the Hermes bundled manifest rules.
 - Hermes Python: `HERMES_PYTHON` is derived from `$HERMES_OFFLINE_HOME/runtime/venv`; Unix shims export the Hermes environment variables listed above, and the Windows installer writes them to the user environment.
 

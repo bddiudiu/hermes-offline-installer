@@ -253,6 +253,7 @@ wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`
 - Hermes 配置：Windows 默认为 `C:\ProgramData\SSC\Hermes\config.yaml` 和 `C:\ProgramData\SSC\Hermes\.env`；Unix 默认为 `~/.hermes/config.yaml` 和 `~/.hermes/.env`；可通过 `HERMES_HOME` 覆盖。
 - 用户插件、skills、日志和状态文件跟随 `HERMES_HOME`。
 - 常见第三方缓存默认随 Hermes shim 收敛到 `$HERMES_HOME/cache`，包括 `HF_HOME`、`HUGGINGFACE_HUB_CACHE`、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`MPLCONFIGDIR`、`NLTK_DATA`、`PLAYWRIGHT_BROWSERS_PATH` 和临时目录。
+- 当用户没有预先设置对应变量时，Hermes shim 会把常见下载源默认指向中国大陆镜像：`PIP_INDEX_URL` 和 `UV_DEFAULT_INDEX` 使用清华 PyPI，`HF_ENDPOINT` 使用 `hf-mirror.com`，`PLAYWRIGHT_DOWNLOAD_HOST` 使用 npmmirror Playwright 资源，`npm_config_registry` 使用 npmmirror npm。
 - 内置 Agent Skills 会在安装或升级时从 runtime resources 恢复。用户修改或删除过的 skills 会按照 Hermes bundled manifest 规则保留。
 - Hermes Python：`HERMES_PYTHON` 从 `$HERMES_OFFLINE_HOME/runtime/venv` 派生；Unix shim 会导出上表 Hermes 环境变量，Windows 安装器会写入用户环境变量。
 
