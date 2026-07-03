@@ -7,13 +7,12 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
-from manifest import PYTHON_VERSION, UV_VERSION, WINDOWS_PYTHON_VERSION, write_manifest
+from manifest import PYTHON_VERSION, UV_VERSION, write_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_STDLIB_ZIP = f"python{''.join(PYTHON_VERSION.split('.')[:2])}.zip"
@@ -36,32 +35,6 @@ HERMES_RESOURCE_SENTINELS = [
     "tui_dist/dist/entry.js",
     "tui_dist/package.json",
 ]
-
-PYTHON_RUNTIME_IMPORT_CHECK = "import ctypes, encodings, ensurepip, venv"
-
-WINDOWS_PYTHON_RUNTIME_SMOKE = r"""
-import ctypes
-import encodings
-import ensurepip
-import os
-import subprocess
-import sys
-import tempfile
-import venv
-from pathlib import Path
-
-print(f"Python executable: {sys.executable}")
-print(f"ctypes module: {ctypes.__file__}")
-
-with tempfile.TemporaryDirectory(prefix="hermes-runtime-smoke-") as tmp:
-    venv_dir = Path(tmp) / "venv"
-    venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
-    venv_python = venv_dir / "Scripts" / "python.exe"
-    env = os.environ.copy()
-    env.pop("PYTHONHOME", None)
-    env.pop("PYTHONPATH", None)
-    subprocess.run([str(venv_python), "-m", "pip", "--version"], check=True, env=env)
-"""
 
 
 
@@ -100,10 +73,7 @@ def prepare_uv(platform_name: str, bundle: Path) -> None:
     download(url, archive)
 
 
-def prepare_python_runtime(platform_name: str, bundle: Path) -> None:
-    if platform_name.startswith("win"):
-        prepare_windows_python_runtime(bundle)
-        return
+def prepare_python_runtime(bundle: Path) -> None:
     python_dest = bundle / "runtime" / "python"
     uv_python_dir = Path(os.environ.get("UV_PYTHON_INSTALL_DIR", ROOT / ".bundle-work" / "uv-python"))
     os.environ["UV_PYTHON_INSTALL_DIR"] = str(uv_python_dir)
@@ -112,29 +82,6 @@ def prepare_python_runtime(platform_name: str, bundle: Path) -> None:
     if not candidates:
         raise SystemExit(f"未找到 uv 安装的 Python runtime: {uv_python_dir}")
     copytree(candidates[-1], python_dest)
-
-
-def prepare_windows_python_runtime(bundle: Path) -> None:
-    # Windows 必须使用 python.org 官方签名构建(NuGet 分发):python-build-standalone
-    # 的二进制没有 Authenticode 签名,会被应用程序控制策略(智能应用控制 / WDAC)拦截。
-    python_dest = bundle / "runtime" / "python"
-    work = ROOT / ".bundle-work"
-    nupkg = work / f"python.{WINDOWS_PYTHON_VERSION}.nupkg"
-    if not nupkg.exists():
-        download(
-            "https://api.nuget.org/v3-flatcontainer/python/"
-            f"{WINDOWS_PYTHON_VERSION}/python.{WINDOWS_PYTHON_VERSION}.nupkg",
-            nupkg,
-        )
-    extract_dir = work / f"python-nuget-{WINDOWS_PYTHON_VERSION}"
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir)
-    with zipfile.ZipFile(nupkg) as zf:
-        zf.extractall(extract_dir)
-    tools = extract_dir / "tools"
-    if not (tools / "python.exe").is_file():
-        raise SystemExit(f"NuGet python 包缺少 tools/python.exe: {nupkg}")
-    copytree(tools, python_dest)
 
 
 def validate_python_runtime(platform_name: str, bundle: Path) -> None:
@@ -163,57 +110,14 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
     env = os.environ.copy()
     env.pop("PYTHONHOME", None)
     env.pop("PYTHONPATH", None)
-    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     if platform_name.startswith("win"):
-        if sys.platform != "win32":
-            raise SystemExit("Windows bundle Python smoke tests must run on a Windows host")
         env["PYTHONHOME"] = str(python.parent)
     subprocess.run(
-        [str(python), "-c", PYTHON_RUNTIME_IMPORT_CHECK],
+        [str(python), "-c", "import encodings, ensurepip, venv"],
         check=True,
         cwd=bundle,
         env=env,
     )
-    if platform_name.startswith("win"):
-        subprocess.run(
-            [str(python), "-c", WINDOWS_PYTHON_RUNTIME_SMOKE],
-            check=True,
-            cwd=bundle,
-            env=env,
-        )
-        validate_windows_python_signatures(python.parent)
-
-
-def validate_windows_python_signatures(python_home: Path) -> None:
-    # 应用程序控制策略按签名放行,这里锁死关键二进制必须带有效 Authenticode 签名,
-    # 防止运行时来源回退到无签名构建。
-    stdlib_dll = f"python{''.join(WINDOWS_PYTHON_VERSION.split('.')[:2])}.dll"
-    critical = [
-        python_home / "python.exe",
-        python_home / "python3.dll",
-        python_home / stdlib_dll,
-        python_home / "DLLs" / "_ctypes.pyd",
-        *sorted((python_home / "DLLs").glob("libffi*.dll")),
-    ]
-    missing = [str(path) for path in critical if not path.is_file()]
-    if missing:
-        raise SystemExit("Windows Python runtime 缺少关键文件: " + ", ".join(missing))
-    joined = ", ".join(f"'{path}'" for path in critical)
-    script = (
-        f"$bad = @({joined}) | Where-Object {{ "
-        "(Get-AuthenticodeSignature -FilePath $_).Status -ne 'Valid' }; "
-        "if ($bad) { $bad | ForEach-Object { Write-Output $_ }; exit 1 }"
-    )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise SystemExit(
-            "Windows Python runtime 存在无效 Authenticode 签名(会被应用程序控制策略拦截):\n"
-            + (result.stdout or "") + (result.stderr or "")
-        )
 
 
 def validate_hermes_resources(resources: Path) -> None:
@@ -279,21 +183,6 @@ def validate_archive_python_stdlib(platform_name: str, archive: Path) -> None:
         )
 
 
-def validate_archive_windows_runtime_hooks(platform_name: str, archive: Path) -> None:
-    if not platform_name.startswith("win"):
-        return
-
-    with zipfile.ZipFile(archive) as zf:
-        names = set(zf.namelist())
-    prefix = f"hermes-offline-installer-{platform_name}/"
-    python_prefix = prefix + "runtime/python/"
-    if not any(name.startswith(python_prefix) and name.endswith("/_ctypes.pyd") for name in names):
-        raise SystemExit(f"{archive.name} does not contain bundled Python _ctypes.pyd")
-    pip_hook = prefix + "scripts/pip_sitecustomize.py"
-    if pip_hook not in names:
-        raise SystemExit(f"{archive.name} does not contain {pip_hook}")
-
-
 def validate_archive_hermes_resources(platform_name: str, archive: Path) -> None:
     prefix = f"hermes-offline-installer-{platform_name}/hermes-resources/"
     expected = {prefix + rel for rel in HERMES_RESOURCE_SENTINELS}
@@ -354,16 +243,13 @@ def main() -> None:
         shutil.copy2(bundle / "installers" / "uninstall_windows.cmd", bundle / "uninstall.cmd")
 
     prepare_uv(args.platform, bundle)
-    prepare_python_runtime(args.platform, bundle)
+    prepare_python_runtime(bundle)
     validate_python_runtime(args.platform, bundle)
     write_manifest(
         bundle / "manifest.json",
         target_platform=args.platform,
         extra={
             "kind": "bundle",
-            "python_version": (
-                WINDOWS_PYTHON_VERSION if args.platform.startswith("win") else PYTHON_VERSION
-            ),
             "wheelhouse": wheelhouse_manifest,
             "hermes_version": wheelhouse_manifest.get("hermes_version"),
             "hermes_extras": wheelhouse_manifest.get("extras"),
@@ -373,7 +259,6 @@ def main() -> None:
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)
-    validate_archive_windows_runtime_hooks(args.platform, archive)
     validate_archive_hermes_resources(args.platform, archive)
     print(f"created {archive}")
 

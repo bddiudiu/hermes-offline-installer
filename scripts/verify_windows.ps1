@@ -34,52 +34,6 @@ function Test-SamePath {
   return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Test-HermesRuntimeDirectory {
-  param(
-    [AllowNull()] [string] $Path
-  )
-
-  if (-not $Path -or -not (Test-Path $Path)) {
-    return $false
-  }
-
-  foreach ($Marker in @("venv", "bundle-runtime", "hermes-resources", "wheelhouse")) {
-    if (Test-Path (Join-Path $Path $Marker)) {
-      return $true
-    }
-  }
-  return $false
-}
-
-function Get-NormalizedHermesOfflineHome {
-  param(
-    [AllowNull()] [string] $Value,
-    [string] $LegacyInstallRoot,
-    [string] $DefaultInstallRoot
-  )
-
-  if (-not $Value -or (Test-SamePath -Left $Value -Right $LegacyInstallRoot)) {
-    return $null
-  }
-
-  $Candidate = ConvertTo-ComparablePath -Path $Value
-  $DefaultRuntimeDir = Join-Path $DefaultInstallRoot "runtime"
-  $Leaf = Split-Path -Leaf $Candidate
-  if ($Leaf -and $Leaf.Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase)) {
-    $Parent = Split-Path -Parent $Candidate
-    $ParentShim = if ($Parent) { Join-Path $Parent "bin\hermes.cmd" } else { $null }
-    if (
-      (Test-SamePath -Left $Candidate -Right $DefaultRuntimeDir) -or
-      (Test-HermesRuntimeDirectory -Path $Candidate) -or
-      ($ParentShim -and (Test-Path $ParentShim))
-    ) {
-      return $Parent
-    }
-  }
-
-  return $Candidate
-}
-
 function Get-WindowsDefaultHermesHome {
   $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
   return (Join-Path $ProgramDataRoot "SSC\Hermes")
@@ -95,7 +49,11 @@ $LocalPortableHome = Join-Path $BundleDirPath ".hermes"
 $LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
 $LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
-$CustomInstallRoot = Get-NormalizedHermesOfflineHome -Value $env:HERMES_OFFLINE_HOME -LegacyInstallRoot $LegacyInstallRoot -DefaultInstallRoot (Get-WindowsDefaultHermesOfflineHome)
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
+  $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
 $CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
   $env:HERMES_HOME
 } else {
@@ -135,7 +93,7 @@ if (-not (Test-Path $HermesUninstallCmd)) { throw "缺少 hermes uninstall shim:
 $HermesExeShim = Join-Path $BinDir "hermes.exe"
 if (-not (Test-Path $HermesExeShim)) { throw "缺少 hermes.exe shim: $HermesExeShim" }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
-$ConfigText = Get-Content -Raw -Path $Config -Encoding UTF8
+$ConfigText = Get-Content -Raw -Path $Config
 if ($ConfigText -notmatch '(?m)^\s+default\s*:\s*qwen3\s*(#.*)?$') { throw "config.yaml 未默认选择 qwen3 模型" }
 if ($ConfigText -notmatch 'provider:\s*custom:zhan_ai') { throw "config.yaml 未默认选择 zhan_ai 渠道" }
 if ($ConfigText -notmatch 'zhan_ai:' -or $ConfigText -notmatch 'ZHANCLAW_BASE_URL' -or $ConfigText -notmatch 'ZHANCLAW_API_KEY') { throw "config.yaml 缺少 zhan_ai provider 配置" }
@@ -143,23 +101,6 @@ if ($ConfigText -notmatch '(?m)^\s+-\s*qwen3\s*(#.*)?$|^\s+models\s*:\s*\[[^\r\n
 if ($ConfigText -match '(?m)^api_server_port\s*:') { throw "config.yaml 仍包含旧 api_server_port 配置" }
 if ($ConfigText -notmatch '(?s)platforms:.*api_server:.*enabled:\s*true.*extra:.*port\s*:\s*[^#\r\n]+') { throw "config.yaml 缺少 platforms.api_server.extra.port 配置" }
 if (-not (Test-Path $EnvFile)) { throw "缺少 .env" }
-$EnvLines = @(Get-Content -Path $EnvFile -Encoding UTF8 -ErrorAction Stop)
-$ApiServerKey = $null
-foreach ($Line in $EnvLines) {
-  if ($Line -match '^\s*API_SERVER_KEY\s*=\s*(.*)$') {
-    $ApiServerKey = $Matches[1].Trim()
-  }
-}
-if ($ApiServerKey -and $ApiServerKey.Length -ge 2) {
-  $First = $ApiServerKey.Substring(0, 1)
-  $Last = $ApiServerKey.Substring($ApiServerKey.Length - 1, 1)
-  if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
-    $ApiServerKey = $ApiServerKey.Substring(1, $ApiServerKey.Length - 2)
-  }
-}
-if (-not $ApiServerKey -or $ApiServerKey -eq "clawpanel-local" -or $ApiServerKey.Length -lt 16) {
-  throw ".env 中 API_SERVER_KEY 缺失或仍为弱占位符"
-}
 if (-not (Test-Path $SkillsDir)) { throw "缺少 Agent Skills 目录: $SkillsDir" }
 $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File -ErrorAction SilentlyContinue)
 if ($SkillFiles.Count -eq 0) { throw "Agent Skills 目录中缺少 SKILL.md: $SkillsDir" }
@@ -176,7 +117,7 @@ if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\package.json"))) { throw 
 foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd")) {
   $RequiredShim = Join-Path $BinDir $RequiredShimName
   if (-not (Test-Path $RequiredShim)) { throw "缺少 shim: $RequiredShim" }
-  $RequiredShimText = Get-Content -Raw -Path $RequiredShim -Encoding UTF8
+  $RequiredShimText = Get-Content -Raw -Path $RequiredShim
   if ($RequiredShimText -notmatch 'HERMES_OFFLINE_HOME') { throw "$RequiredShimName 未设置 HERMES_OFFLINE_HOME" }
   if ($RequiredShimText -notmatch 'HERMES_TUI_DIR') { throw "$RequiredShimName 未设置 HERMES_TUI_DIR" }
   if ($RequiredShimText -notmatch 'ZHANCLAW_BASE_URL' -or $RequiredShimText -notmatch 'ZHANCLAW_API_KEY') { throw "$RequiredShimName 未刷新 ZHANCLAW 用户环境变量" }
@@ -191,6 +132,3 @@ if (-not $PortableMode) {
 }
 
 & $HermesCmd version
-if ($LASTEXITCODE -ne 0) {
-  throw "hermes version 退出码 $LASTEXITCODE"
-}

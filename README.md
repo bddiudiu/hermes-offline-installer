@@ -65,7 +65,7 @@ To customize install locations, set environment variables in PowerShell before r
 
 ```powershell
 $env:HERMES_HOME="D:\Hermes\home"
-$env:HERMES_OFFLINE_HOME="D:\Hermes\offline"
+$env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
 .\installers\install_windows.ps1
 ```
 
@@ -90,7 +90,7 @@ Complete installer environment variable list:
 | `PYTHONUTF8` | `1` in the Windows user environment and shim |
 | `PYTHONIOENCODING` | `utf-8` in the Windows user environment and shim |
 
-End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. `HERMES_OFFLINE_HOME` is the offline install root that contains `runtime` and `bin`; it should not point directly at the nested `runtime` directory. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when it detects old `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline` defaults, it treats them as legacy values, migrates to the new product directories, and removes the old `%USERPROFILE%\.hermes-offline\bin` PATH entry. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
+End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when it detects old `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline` defaults, it treats them as legacy values, migrates to the new product directories, and removes the old `%USERPROFILE%\.hermes-offline\bin` PATH entry. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
 
 To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, preserves `.env`, and only patches the default model provider plus the `zhan_ai` provider block in `config.yaml`. When moving from the old `%USERPROFILE%\.hermes` default to `C:\ProgramData\SSC\Hermes`, missing `config.yaml` and `.env` files are copied from the old home first.
 
@@ -246,7 +246,7 @@ Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resource
 
 ## Install Layout
 
-- Offline install root: `C:\Program Files\StarSoftComm\ZhanClaw\Hermes` on Windows or `~/.hermes-offline` on Unix; override with `HERMES_OFFLINE_HOME`. The runtime itself lives under the root's `runtime` subdirectory.
+- Runtime: `C:\Program Files\StarSoftComm\ZhanClaw\Hermes\runtime` on Windows or `~/.hermes-offline/runtime` on Unix; override with `HERMES_OFFLINE_HOME`.
 - Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, `web_dist`, and `tui_dist`.
 - Shim: `~/.local/bin/hermes` on Unix; `%HERMES_OFFLINE_HOME%\bin\hermes.cmd` on Windows.
 - Portable mode shim: `<extracted-dir>\.hermes-offline\bin\hermes.cmd` on Windows; `<extracted-dir>/.hermes-offline/bin/hermes` on Unix.

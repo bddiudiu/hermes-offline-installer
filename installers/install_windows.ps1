@@ -53,54 +53,6 @@ function Test-SamePath {
   return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Test-HermesRuntimeDirectory {
-  param(
-    [AllowNull()] [string] $Path
-  )
-
-  if (-not $Path -or -not (Test-Path $Path)) {
-    return $false
-  }
-
-  foreach ($Marker in @("venv", "bundle-runtime", "hermes-resources", "wheelhouse")) {
-    if (Test-Path (Join-Path $Path $Marker)) {
-      return $true
-    }
-  }
-  return $false
-}
-
-function Get-NormalizedHermesOfflineHome {
-  param(
-    [AllowNull()] [string] $Value,
-    [string] $LegacyInstallRoot,
-    [string] $DefaultInstallRoot
-  )
-
-  if (-not $Value -or (Test-SamePath -Left $Value -Right $LegacyInstallRoot)) {
-    return $null
-  }
-
-  $Candidate = ConvertTo-ComparablePath -Path $Value
-  $DefaultRuntimeDir = Join-Path $DefaultInstallRoot "runtime"
-  $Leaf = Split-Path -Leaf $Candidate
-  if ($Leaf -and $Leaf.Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase)) {
-    $Parent = Split-Path -Parent $Candidate
-    $ParentShim = if ($Parent) { Join-Path $Parent "bin\hermes.cmd" } else { $null }
-    if (
-      (Test-SamePath -Left $Candidate -Right $DefaultRuntimeDir) -or
-      (Test-HermesRuntimeDirectory -Path $Candidate) -or
-      ($ParentShim -and (Test-Path $ParentShim))
-    ) {
-      Write-Host "Detected HERMES_OFFLINE_HOME points at a Hermes runtime directory: $Candidate"
-      Write-Host "Using Hermes install root instead: $Parent"
-      return $Parent
-    }
-  }
-
-  return $Candidate
-}
-
 function Test-PathUnderRoot {
   param(
     [AllowNull()] [string] $Path,
@@ -134,174 +86,19 @@ function Test-IsAdministrator {
   return $Principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-CurrentUserSid {
-  return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-}
-
-function Get-InstallerTargetUserSid {
-  $Sid = $env:HERMES_INSTALLER_USER_SID
-  if ($Sid -and $Sid -match '^S-\d-\d+-.+') {
-    return $Sid
-  }
-  return Get-CurrentUserSid
-}
-
-function Get-UserProfilePathFromSid {
+function Grant-HermesHomeAccess {
   param(
-    [string] $Sid
-  )
-
-  try {
-    $ProfileListPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$Sid"
-    $ProfileImagePath = (Get-ItemProperty -Path $ProfileListPath -Name "ProfileImagePath" -ErrorAction Stop).ProfileImagePath
-    if ($ProfileImagePath) {
-      return [Environment]::ExpandEnvironmentVariables($ProfileImagePath)
-    }
-  } catch {
-  }
-  return $env:USERPROFILE
-}
-
-function Open-TargetUserEnvironmentKey {
-  param(
-    [bool] $Writable
-  )
-
-  $UsersRoot = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
-    [Microsoft.Win32.RegistryHive]::Users,
-    [Microsoft.Win32.RegistryView]::Default
-  )
-  try {
-    $KeyPath = "$TargetUserSid\Environment"
-    $Key = if ($Writable) {
-      $UsersRoot.CreateSubKey($KeyPath)
-    } else {
-      $UsersRoot.OpenSubKey($KeyPath, $false)
-    }
-    if (-not $Key) {
-      throw "Could not open HKEY_USERS\$KeyPath"
-    }
-    return $Key
-  } finally {
-    $UsersRoot.Dispose()
-  }
-}
-
-function Get-TargetUserEnvironmentVariable {
-  param(
-    [string] $Name,
-    [switch] $DoNotExpand
-  )
-
-  $Key = Open-TargetUserEnvironmentKey -Writable $false
-  try {
-    if ($DoNotExpand) {
-      return $Key.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    }
-    return $Key.GetValue($Name, $null)
-  } finally {
-    $Key.Dispose()
-  }
-}
-
-function Get-TargetUserEnvironmentValueKind {
-  param(
-    [string] $Name
-  )
-
-  $Key = Open-TargetUserEnvironmentKey -Writable $false
-  try {
-    try {
-      return $Key.GetValueKind($Name)
-    } catch {
-      return [Microsoft.Win32.RegistryValueKind]::String
-    }
-  } finally {
-    $Key.Dispose()
-  }
-}
-
-function Set-TargetUserEnvironmentVariable {
-  param(
-    [string] $Name,
-    [AllowNull()] [string] $Value,
-    [Microsoft.Win32.RegistryValueKind] $Kind = [Microsoft.Win32.RegistryValueKind]::String
-  )
-
-  $Key = Open-TargetUserEnvironmentKey -Writable $true
-  try {
-    if ($null -eq $Value) {
-      try {
-        $Key.DeleteValue($Name, $false)
-      } catch {
-      }
-      return
-    }
-    $Key.SetValue($Name, $Value, $Kind)
-  } finally {
-    $Key.Dispose()
-  }
-}
-
-function Set-HermesHomeAccess {
-  param(
-    [string] $Path,
-    [string] $UserSid,
-    [string] $CurrentSid
+    [string] $Path
   )
 
   if (-not (Get-Command icacls.exe -ErrorAction SilentlyContinue)) {
-    Write-Warning "icacls.exe was not found; could not update Hermes home ACLs for $Path."
+    Write-Warning "icacls.exe was not found; could not grant standard Users modify access to $Path."
     return
   }
 
-  & icacls.exe $Path /inheritance:r /T /C | Out-Null
+  & icacls.exe $Path /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not disable inherited ACLs under $Path."
-  }
-
-  & icacls.exe $Path /remove:g "*S-1-5-32-545" /T /C | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not remove broad standard Users ACLs from $Path."
-  }
-
-  $SystemGrant = "*S-1-5-18:(OI)(CI)F"
-  $AdminGrant = "*S-1-5-32-544:(OI)(CI)F"
-  & icacls.exe $Path /grant:r $SystemGrant $AdminGrant /T /C | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    # A previous install may have stripped inheritance without granting
-    # Administrators, locking even elevated processes out. Take ownership
-    # for the Administrators group and retry once.
-    if (Get-Command takeown.exe -ErrorAction SilentlyContinue) {
-      & takeown.exe /F $Path /R /A /D Y | Out-Null
-      & icacls.exe $Path /grant:r $SystemGrant $AdminGrant /T /C | Out-Null
-    }
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "Could not grant system and administrator access to $Path."
-    }
-  }
-
-  $UserSids = @($UserSid, $CurrentSid) | Where-Object { $_ } | Select-Object -Unique
-  foreach ($Sid in $UserSids) {
-    $UserGrant = "*{0}:(OI)(CI)M" -f $Sid
-    & icacls.exe $Path /grant:r $UserGrant /T /C | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "Could not grant Hermes home access to user SID $Sid. Hermes may not be able to read config or .env for that user."
-    }
-  }
-
-  & icacls.exe $Path /grant "*S-1-5-32-545:RX" /C | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Could not grant standard Users traverse access to $Path."
-  }
-
-  foreach ($WritableName in @("cache", "logs", "state")) {
-    $WritablePath = Join-Path $Path $WritableName
-    New-Item -ItemType Directory -Force -Path $WritablePath | Out-Null
-    & icacls.exe $WritablePath /grant "*S-1-5-32-545:(OI)(CI)M" /T /C | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "Could not grant standard Users modify access to runtime writable directory $WritablePath."
-    }
+    Write-Warning "Could not grant standard Users modify access to $Path. Hermes may need administrator rights to write config, logs, or caches."
   }
 }
 
@@ -309,16 +106,14 @@ $DefaultHermesHome = Get-WindowsDefaultHermesHome
 $DefaultInstallRoot = Get-WindowsDefaultHermesOfflineHome
 $DefaultProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
 $DefaultProgramFilesRoot = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
-$CurrentUserSid = Get-CurrentUserSid
-$TargetUserSid = Get-InstallerTargetUserSid
-$TargetUserProfile = Get-UserProfilePathFromSid -Sid $TargetUserSid
-if ($TargetUserSid -ne $CurrentUserSid) {
-  Write-Host "Writing User environment variables for original installer user SID: $TargetUserSid"
-}
-$LegacyHermesHome = Join-Path $TargetUserProfile ".hermes"
-$LegacyInstallRoot = Join-Path $TargetUserProfile ".hermes-offline"
+$LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
+$LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
-$CustomInstallRoot = Get-NormalizedHermesOfflineHome -Value $env:HERMES_OFFLINE_HOME -LegacyInstallRoot $LegacyInstallRoot -DefaultInstallRoot $DefaultInstallRoot
+$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
+  $env:HERMES_OFFLINE_HOME
+} else {
+  $null
+}
 $CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
   $env:HERMES_HOME
 } else {
@@ -398,10 +193,15 @@ function Stop-ExistingHermesProcesses {
       (Test-ProcessMatchesPath -Value $ExecutablePath -Paths $MatchPaths) -or
       (Test-ProcessMatchesPath -Value $CommandLine -Paths $MatchPaths)
     )
-    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and $MatchesKnownPath) {
+    if ($Name -in @("hermes.exe", "hermes-agent.exe") -and ($MatchesKnownPath -or (
+      $CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    ))) {
       return $true
     }
-    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and $MatchesKnownPath) {
+    if ($Name -in @("python.exe", "pythonw.exe", "uv.exe", "uvicorn.exe") -and (
+      $MatchesKnownPath -or
+      ($CommandLine -and $CommandLine.IndexOf("hermes", [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+    )) {
       return $true
     }
     return $false
@@ -465,40 +265,6 @@ function Remove-InstallPath {
   }
 }
 
-function New-BackupPath {
-  param(
-    [string] $Path,
-    [string] $Label
-  )
-
-  $Parent = Split-Path -Parent $Path
-  $Name = Split-Path -Leaf $Path
-  $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
-  $Candidate = Join-Path $Parent "$Name.$Label.$Timestamp"
-  $Index = 0
-  while (Test-Path $Candidate) {
-    $Index++
-    $Candidate = Join-Path $Parent "$Name.$Label.$Timestamp.$Index"
-  }
-  return $Candidate
-}
-
-function Restore-RuntimeBackup {
-  param(
-    [string] $RuntimeDir,
-    [AllowNull()] [string] $RuntimeBackupDir
-  )
-
-  if (-not $RuntimeBackupDir -or -not (Test-Path $RuntimeBackupDir)) {
-    return
-  }
-  if (Test-Path $RuntimeDir) {
-    Remove-InstallPath -Path $RuntimeDir
-  }
-  Move-Item -Force $RuntimeBackupDir $RuntimeDir
-  Write-Host "Restored previous Hermes runtime: $RuntimeDir"
-}
-
 function Clear-PythonRuntimeEnvironment {
   Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
@@ -525,8 +291,7 @@ function Invoke-HermesVenvAttempt {
   param(
     [string] $PythonBin,
     [string] $VenvDir,
-    [AllowNull()] [string] $PythonHome,
-    [AllowNull()] [string] $BundledPythonHome
+    [AllowNull()] [string] $PythonHome
   )
 
   Clear-PythonRuntimeEnvironment
@@ -534,78 +299,42 @@ function Invoke-HermesVenvAttempt {
     $env:PYTHONHOME = $PythonHome
   }
   Remove-InstallPath -Path $VenvDir
-  $VenvResult = Invoke-NativeCommandCaptured `
-    -FilePath $PythonBin `
-    -Arguments @("-m", "venv", $VenvDir)
-  $VenvExitCode = $VenvResult.ExitCode
+  & $PythonBin -m venv --without-pip $VenvDir
+  $VenvExitCode = $LASTEXITCODE
   Clear-PythonRuntimeEnvironment
-  if ($VenvExitCode -eq 0) {
+  if ($VenvExitCode -ne 0) {
+    return [pscustomobject]@{
+      Succeeded = $false
+      Stage = "venv"
+      Summary = "venv exit code $VenvExitCode"
+      Details = ""
+    }
+  }
+
+  $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+  try {
+    Invoke-HermesEnsurePip -VenvPython $VenvPython -PythonHome $PythonHome
     return [pscustomobject]@{
       Succeeded = $true
       Stage = "complete"
       Summary = "ok"
       Details = ""
     }
-  }
-
-  $VenvDetails = ""
-  if ($VenvResult.Output) {
-    $VenvDetails = (($VenvResult.Output | Select-Object -Last 30) -join "`n")
-  }
-  if ($BundledPythonHome) {
-    Write-Warning "Python venv creation with bundled pip failed with exit code $VenvExitCode. Retrying with --without-pip and bundled pip wheel ..."
+  } catch {
+    $Message = $_.Exception.Message
+    $FirstLine = $Message
+    $LineBreakIndex = $FirstLine.IndexOf("`n")
+    if ($LineBreakIndex -ge 0) {
+      $FirstLine = $FirstLine.Substring(0, $LineBreakIndex).TrimEnd("`r")
+    }
+    return [pscustomobject]@{
+      Succeeded = $false
+      Stage = "ensurepip"
+      Summary = "ensurepip failed: $FirstLine"
+      Details = $Message
+    }
+  } finally {
     Clear-PythonRuntimeEnvironment
-    if ($PythonHome) {
-      $env:PYTHONHOME = $PythonHome
-    }
-    Remove-InstallPath -Path $VenvDir
-    $VenvWithoutPipResult = Invoke-NativeCommandCaptured `
-      -FilePath $PythonBin `
-      -Arguments @("-m", "venv", "--without-pip", $VenvDir)
-    Clear-PythonRuntimeEnvironment
-    if ($VenvWithoutPipResult.ExitCode -ne 0) {
-      $WithoutPipDetails = ""
-      if ($VenvWithoutPipResult.Output) {
-        $WithoutPipDetails = (($VenvWithoutPipResult.Output | Select-Object -Last 30) -join "`n")
-      }
-      return [pscustomobject]@{
-        Succeeded = $false
-        Stage = "venv"
-        Summary = "venv exit code $VenvExitCode; without-pip exit code $($VenvWithoutPipResult.ExitCode)"
-        Details = "$VenvDetails`n$WithoutPipDetails"
-      }
-    }
-
-    $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-    try {
-      Invoke-HermesPipWheelBootstrap -VenvPython $VenvPython -BundledPythonHome $BundledPythonHome
-      return [pscustomobject]@{
-        Succeeded = $true
-        Stage = "complete"
-        Summary = "ok"
-        Details = ""
-      }
-    } catch {
-      $Message = $_.Exception.Message
-      $FirstLine = $Message
-      $LineBreakIndex = $FirstLine.IndexOf("`n")
-      if ($LineBreakIndex -ge 0) {
-        $FirstLine = $FirstLine.Substring(0, $LineBreakIndex).TrimEnd("`r")
-      }
-      return [pscustomobject]@{
-        Succeeded = $false
-        Stage = "pip"
-        Summary = "pip bootstrap failed: $FirstLine"
-        Details = $Message
-      }
-    }
-  }
-
-  return [pscustomobject]@{
-    Succeeded = $false
-    Stage = "venv"
-    Summary = "venv exit code $VenvExitCode"
-    Details = $VenvDetails
   }
 }
 
@@ -613,36 +342,31 @@ function New-HermesVenv {
   param(
     [string] $PythonBin,
     [string] $VenvDir,
-    [AllowNull()] [string] $FallbackPythonHome,
-    [AllowNull()] [string] $BundledPythonHome
+    [AllowNull()] [string] $FallbackPythonHome
   )
 
-  $FirstResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null -BundledPythonHome $BundledPythonHome
+  $FirstResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
   if ($FirstResult.Succeeded) {
     return
   }
 
   Write-Warning "Python venv bootstrap failed using a clean Python environment ($($FirstResult.Summary)). Retrying once after recreating $VenvDir."
   Start-Sleep -Seconds 1
-  $SecondResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null -BundledPythonHome $BundledPythonHome
+  $SecondResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
   if ($SecondResult.Succeeded) {
     return
   }
 
   if ($FallbackPythonHome) {
     Write-Warning "Python venv bootstrap failed again ($($SecondResult.Summary)). Retrying with PYTHONHOME=$FallbackPythonHome for this process only."
-    $ThirdResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $FallbackPythonHome -BundledPythonHome $BundledPythonHome
+    $ThirdResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $FallbackPythonHome
     if ($ThirdResult.Succeeded) {
       return
     }
-    $FailureDetails = @($FirstResult.Details, $SecondResult.Details, $ThirdResult.Details) | Where-Object { $_ }
-    $DetailsText = if ($FailureDetails.Count -gt 0) { "`n" + ($FailureDetails -join "`n") } else { "" }
-    throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); PYTHONHOME retry: $($ThirdResult.Summary); python: $PythonBin; target: $VenvDir$DetailsText"
+    throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); PYTHONHOME retry: $($ThirdResult.Summary); python: $PythonBin; target: $VenvDir"
   }
 
-  $FailureDetails = @($FirstResult.Details, $SecondResult.Details) | Where-Object { $_ }
-  $DetailsText = if ($FailureDetails.Count -gt 0) { "`n" + ($FailureDetails -join "`n") } else { "" }
-  throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); python: $PythonBin; target: $VenvDir$DetailsText"
+  throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); python: $PythonBin; target: $VenvDir"
 }
 
 function Invoke-NativeCommandCaptured {
@@ -651,120 +375,68 @@ function Invoke-NativeCommandCaptured {
     [string[]] $Arguments
   )
 
-  $Output = @()
-  $ExitCode = 1
-  $PreviousErrorActionPreference = $ErrorActionPreference
+  $StdoutPath = [System.IO.Path]::GetTempFileName()
+  $StderrPath = [System.IO.Path]::GetTempFileName()
   try {
-    $ErrorActionPreference = "Continue"
-    $Output = @(& $FilePath @Arguments 2>&1)
-    $ExitCode = $LASTEXITCODE
-  } catch {
-    $Output += $_.Exception.Message
-    if ($LASTEXITCODE -is [int]) {
-      $ExitCode = $LASTEXITCODE
+    $Process = Start-Process `
+      -FilePath $FilePath `
+      -ArgumentList $Arguments `
+      -NoNewWindow `
+      -Wait `
+      -PassThru `
+      -RedirectStandardOutput $StdoutPath `
+      -RedirectStandardError $StderrPath
+    $Output = @()
+    if (Test-Path $StdoutPath) {
+      $Output += @(Get-Content -Path $StdoutPath -ErrorAction SilentlyContinue)
+    }
+    if (Test-Path $StderrPath) {
+      $Output += @(Get-Content -Path $StderrPath -ErrorAction SilentlyContinue)
+    }
+    return [pscustomobject]@{
+      ExitCode = $Process.ExitCode
+      Output = $Output
     }
   } finally {
-    $ErrorActionPreference = $PreviousErrorActionPreference
-  }
-  if ($null -eq $ExitCode) {
-    $ExitCode = 0
-  }
-  return [pscustomobject]@{
-    ExitCode = $ExitCode
-    Output = $Output
+    Remove-Item -Force $StdoutPath, $StderrPath -ErrorAction SilentlyContinue
   }
 }
 
-function Set-ProcessEnvironmentVariableOrRemove {
-  param(
-    [string] $Name,
-    [AllowNull()] [string] $Value
-  )
-
-  if ($null -eq $Value) {
-    Remove-Item -Path "Env:$Name" -ErrorAction SilentlyContinue
-  } else {
-    Set-Item -Path "Env:$Name" -Value $Value
-  }
-}
-
-function New-HermesPipSiteCustomizeDirectory {
-  $Source = Join-Path $BundleDir "scripts\pip_sitecustomize.py"
-  if (-not (Test-Path $Source)) {
-    throw "Missing pip Windows compatibility hook: $Source"
-  }
-
-  $PatchDir = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-pip-sitecustomize-" + [System.Guid]::NewGuid().ToString("N"))
-  New-Item -ItemType Directory -Force -Path $PatchDir | Out-Null
-  Copy-Item -Force $Source (Join-Path $PatchDir "sitecustomize.py")
-  return $PatchDir
-}
-
-function Invoke-HermesPipCommand {
-  param(
-    [string] $PythonBin,
-    [string[]] $Arguments,
-    [string[]] $PythonPathEntries = @()
-  )
-
-  $PatchDir = $null
-  $PreviousPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
-  $PreviousPythonNoUserSite = [Environment]::GetEnvironmentVariable("PYTHONNOUSERSITE", "Process")
-  $PreviousPipConfigFile = [Environment]::GetEnvironmentVariable("PIP_CONFIG_FILE", "Process")
-  $PreviousPipDisableVersionCheck = [Environment]::GetEnvironmentVariable("PIP_DISABLE_PIP_VERSION_CHECK", "Process")
-  try {
-    $PatchDir = New-HermesPipSiteCustomizeDirectory
-    Clear-PythonRuntimeEnvironment
-    $PathEntries = @($PatchDir) + (@($PythonPathEntries) | Where-Object { $_ })
-    $PathSeparator = [System.IO.Path]::PathSeparator.ToString()
-    $env:PYTHONPATH = ($PathEntries -join $PathSeparator)
-    $env:PYTHONNOUSERSITE = "1"
-    $env:PIP_CONFIG_FILE = "nul"
-    $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
-    return Invoke-NativeCommandCaptured `
-      -FilePath $PythonBin `
-      -Arguments (@("-m", "pip") + $Arguments)
-  } finally {
-    Clear-PythonRuntimeEnvironment
-    Set-ProcessEnvironmentVariableOrRemove -Name "PYTHONPATH" -Value $PreviousPythonPath
-    Set-ProcessEnvironmentVariableOrRemove -Name "PYTHONNOUSERSITE" -Value $PreviousPythonNoUserSite
-    Set-ProcessEnvironmentVariableOrRemove -Name "PIP_CONFIG_FILE" -Value $PreviousPipConfigFile
-    Set-ProcessEnvironmentVariableOrRemove -Name "PIP_DISABLE_PIP_VERSION_CHECK" -Value $PreviousPipDisableVersionCheck
-    if ($PatchDir -and (Test-Path $PatchDir)) {
-      Remove-Item -Recurse -Force $PatchDir -ErrorAction SilentlyContinue
-    }
-  }
-}
-
-function Invoke-HermesPipWheelBootstrap {
+function Invoke-HermesEnsurePip {
   param(
     [string] $VenvPython,
-    [string] $BundledPythonHome
+    [AllowNull()] [string] $PythonHome
   )
 
-  $BundledEnsurePipDir = Join-Path $BundledPythonHome "Lib\ensurepip\_bundled"
-  if (-not (Test-Path $BundledEnsurePipDir)) {
-    throw "Bundled ensurepip wheels were not found: $BundledEnsurePipDir"
+  if (-not (Test-Path $VenvPython)) {
+    throw "Python venv executable was not created: $VenvPython"
   }
 
-  $PipWheel = Get-ChildItem -Path $BundledEnsurePipDir -Filter "pip-*.whl" -File -ErrorAction SilentlyContinue |
-    Sort-Object Name -Descending |
-    Select-Object -First 1
-  if (-not $PipWheel) {
-    throw "Bundled pip wheel was not found in $BundledEnsurePipDir"
-  }
-
-  $Result = Invoke-HermesPipCommand `
-    -PythonBin $VenvPython `
-    -PythonPathEntries @($PipWheel.FullName) `
-    -Arguments @("install", "--no-index", "--find-links", $BundledEnsurePipDir, "--upgrade", "--force-reinstall", "pip")
-  if ($Result.ExitCode -ne 0) {
-    $Details = ""
-    if ($Result.Output) {
-      $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
+  $LastResult = $null
+  for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+    Clear-PythonRuntimeEnvironment
+    if ($PythonHome) {
+      $env:PYTHONHOME = $PythonHome
     }
-    throw "Bundled pip wheel bootstrap failed with exit code $($Result.ExitCode). python: $VenvPython; pip wheel: $($PipWheel.FullName)`n$Details"
+    $LastResult = Invoke-NativeCommandCaptured `
+      -FilePath $VenvPython `
+      -Arguments @("-m", "ensurepip", "--upgrade", "--default-pip")
+    Clear-PythonRuntimeEnvironment
+    if ($LastResult.ExitCode -eq 0) {
+      return
+    }
+    if ($Attempt -lt 3) {
+      $NextAttempt = $Attempt + 1
+      Write-Warning "Python ensurepip failed with exit code $($LastResult.ExitCode). Retrying attempt $NextAttempt of 3 ..."
+      Start-Sleep -Seconds $Attempt
+    }
   }
+
+  $Details = ""
+  if ($LastResult -and $LastResult.Output) {
+    $Details = (($LastResult.Output | Select-Object -Last 30) -join "`n")
+  }
+  throw "Python ensurepip failed after 3 attempts with exit code $($LastResult.ExitCode). python: $VenvPython`n$Details"
 }
 
 function Test-LocalTcpPort {
@@ -871,11 +543,10 @@ function Remove-UserPathEntries {
     [string[]] $Paths
   )
 
-  $UserPath = Get-TargetUserEnvironmentVariable -Name "Path" -DoNotExpand
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (-not $UserPath) {
     return
   }
-  $UserPathKind = Get-TargetUserEnvironmentValueKind -Name "Path"
 
   $ComparablePaths = @($Paths | Where-Object { $_ } | ForEach-Object {
     ConvertTo-ComparablePath -Path $_
@@ -902,7 +573,7 @@ function Remove-UserPathEntries {
     }
   }
 
-  Set-TargetUserEnvironmentVariable -Name "Path" -Value (($PathParts | Select-Object -Unique) -join ";") -Kind $UserPathKind
+  [Environment]::SetEnvironmentVariable("Path", ($PathParts | Select-Object -Unique) -join ";", "User")
 }
 
 function Remove-HermesExeShim {
@@ -920,58 +591,6 @@ function Remove-HermesExeShim {
     Write-Host "Removed legacy Hermes exe shim: $ShimExe"
   } catch {
     throw "Could not remove legacy Hermes exe shim $ShimExe. Please close Hermes/ClawPanel and rerun install.cmd. Error: $($_.Exception.Message)"
-  }
-}
-
-function Get-HermesCSharpCompiler {
-  $Command = Get-Command csc.exe -ErrorAction SilentlyContinue
-  if ($Command -and $Command.Source) {
-    return $Command.Source
-  }
-
-  $WindowsDir = if ($env:WINDIR) { $env:WINDIR } else { "C:\Windows" }
-  $Candidates = @(
-    (Join-Path $WindowsDir "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
-    (Join-Path $WindowsDir "Microsoft.NET\Framework\v4.0.30319\csc.exe")
-  )
-  foreach ($Candidate in $Candidates) {
-    if (Test-Path $Candidate) {
-      return $Candidate
-    }
-  }
-
-  return $null
-}
-
-function Invoke-HermesCSharpCompiler {
-  param(
-    [string] $Source,
-    [string] $OutputPath
-  )
-
-  $Compiler = Get-HermesCSharpCompiler
-  if (-not $Compiler) {
-    throw "Could not find csc.exe to build Hermes exe shim."
-  }
-
-  $SourcePath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.cs" -f ([System.Guid]::NewGuid().ToString("N")))
-  try {
-    $Utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
-    [System.IO.File]::WriteAllText($SourcePath, $Source, $Utf8NoBom)
-    $Result = Invoke-NativeCommandCaptured `
-      -FilePath $Compiler `
-      -Arguments @("/nologo", "/target:exe", "/out:$OutputPath", $SourcePath)
-    if ($Result.ExitCode -ne 0) {
-      $Details = ""
-      if ($Result.Output) {
-        $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
-      }
-      throw "csc.exe failed to build Hermes exe shim with exit code $($Result.ExitCode). compiler: $Compiler`n$Details"
-    }
-  } finally {
-    if (Test-Path $SourcePath) {
-      Remove-Item -Force $SourcePath -ErrorAction SilentlyContinue
-    }
   }
 }
 
@@ -1079,12 +698,7 @@ public static class HermesShim
 }
 '@
 
-  try {
-    Add-Type -TypeDefinition $Source -Language CSharp -OutputType ConsoleApplication -OutputAssembly $OutputPath -ErrorAction Stop
-  } catch {
-    Write-Warning "Add-Type could not build the Hermes exe shim as a console application. Retrying with csc.exe. Error: $($_.Exception.Message)"
-    Invoke-HermesCSharpCompiler -Source $Source -OutputPath $OutputPath
-  }
+  Add-Type -TypeDefinition $Source -Language CSharp -OutputType ConsoleApplication -OutputAssembly $OutputPath
 }
 
 function Install-HermesExeShim {
@@ -1177,6 +791,18 @@ function Sync-BundledSkills {
   }
 }
 
+function New-StringList {
+  param(
+    [string[]] $Lines
+  )
+
+  $List = New-Object "System.Collections.Generic.List[string]"
+  foreach ($Line in $Lines) {
+    [void] $List.Add($Line)
+  }
+  return ,$List
+}
+
 function Write-Utf8NoBomLines {
   param(
     [string] $Path,
@@ -1185,6 +811,224 @@ function Write-Utf8NoBomLines {
 
   $Encoding = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllLines($Path, $Lines, $Encoding)
+}
+
+function Find-TopLevelYamlKey {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [string] $Key
+  )
+
+  $Pattern = "^{0}:\s*(#.*)?$" -f [regex]::Escape($Key)
+  for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
+    if ($Lines[$Index] -match $Pattern) {
+      return $Index
+    }
+  }
+  return -1
+}
+
+function Get-TopLevelYamlBlockEnd {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [int] $StartIndex
+  )
+
+  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
+    $Line = $Lines[$Index]
+    if ($Line -match '^\S' -and $Line -notmatch '^\s*#') {
+      return $Index
+    }
+  }
+  return $Lines.Count
+}
+
+function Get-YamlNestedBlockEnd {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [int] $StartIndex,
+    [int] $Indent
+  )
+
+  for ($Index = $StartIndex + 1; $Index -lt $Lines.Count; $Index++) {
+    $Line = $Lines[$Index]
+    if ($Line -match '^\s*$' -or $Line -match '^\s*#') {
+      continue
+    }
+    $Leading = ([regex]::Match($Line, '^\s*')).Value.Length
+    if ($Leading -le $Indent) {
+      return $Index
+    }
+  }
+  return $Lines.Count
+}
+
+function Ensure-ModelProviderLine {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $ModelIndex = Find-TopLevelYamlKey -Lines $Lines -Key "model"
+  if ($ModelIndex -lt 0) {
+    $Lines.Insert(0, "")
+    $Lines.Insert(0, "  provider: custom:zhan_ai")
+    $Lines.Insert(0, "  default: qwen3")
+    $Lines.Insert(0, "model:")
+    return
+  }
+
+  $ModelEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ModelIndex
+  $DefaultIndex = -1
+  $ProviderIndex = -1
+  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+default\s*:') {
+      $DefaultIndex = $Index
+    }
+    if ($Lines[$Index] -match '^\s+provider\s*:') {
+      $ProviderIndex = $Index
+    }
+  }
+
+  if ($DefaultIndex -lt 0) {
+    $Lines.Insert($ModelIndex + 1, "  default: qwen3")
+    $ModelEnd++
+  } elseif (
+    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*([#].*)?$' -or
+    $Lines[$DefaultIndex] -match '^\s+default\s*:\s*[''"]?gpt-4o-mini[''"]?\s*(#.*)?$'
+  ) {
+    $Lines[$DefaultIndex] = "  default: qwen3"
+  }
+
+  $ProviderIndex = -1
+  for ($Index = $ModelIndex + 1; $Index -lt $ModelEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+provider\s*:') {
+      $ProviderIndex = $Index
+      break
+    }
+  }
+
+  if ($ProviderIndex -ge 0) {
+    $Lines[$ProviderIndex] = "  provider: custom:zhan_ai"
+  } else {
+    $InsertIndex = if ($DefaultIndex -ge 0) { $DefaultIndex + 1 } else { $ModelIndex + 2 }
+    $Lines.Insert($InsertIndex, "  provider: custom:zhan_ai")
+  }
+}
+
+function Ensure-ZhanAiProviderBlock {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $ProvidersIndex = Find-TopLevelYamlKey -Lines $Lines -Key "providers"
+  if ($ProvidersIndex -lt 0) {
+    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
+      [void] $Lines.Add("")
+    }
+    [void] $Lines.Add("providers:")
+    [void] $Lines.Add("  zhan_ai:")
+    [void] $Lines.Add('    api: "${ZHANCLAW_BASE_URL}"')
+    [void] $Lines.Add("    key_env: ZHANCLAW_API_KEY")
+    [void] $Lines.Add("    models:")
+    [void] $Lines.Add("      - qwen3")
+    return
+  }
+
+  $ProvidersEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $ProvidersIndex
+  $ZhanIndex = -1
+  for ($Index = $ProvidersIndex + 1; $Index -lt $ProvidersEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}zhan_ai\s*:\s*(#.*)?$') {
+      $ZhanIndex = $Index
+      break
+    }
+  }
+
+  if ($ZhanIndex -lt 0) {
+    $Lines.Insert($ProvidersIndex + 1, "      - qwen3")
+    $Lines.Insert($ProvidersIndex + 1, "    models:")
+    $Lines.Insert($ProvidersIndex + 1, "    key_env: ZHANCLAW_API_KEY")
+    $Lines.Insert($ProvidersIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
+    $Lines.Insert($ProvidersIndex + 1, "  zhan_ai:")
+    return
+  }
+
+  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
+  $ApiIndex = -1
+  $KeyEnvIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+api\s*:') {
+      $ApiIndex = $Index
+    }
+    if ($Lines[$Index] -match '^\s+key_env\s*:') {
+      $KeyEnvIndex = $Index
+    }
+  }
+
+  if ($ApiIndex -ge 0) {
+    $Lines[$ApiIndex] = '    api: "${ZHANCLAW_BASE_URL}"'
+  } else {
+    $Lines.Insert($ZhanIndex + 1, '    api: "${ZHANCLAW_BASE_URL}"')
+    $ZhanEnd++
+  }
+
+  $KeyEnvIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+key_env\s*:') {
+      $KeyEnvIndex = $Index
+      break
+    }
+  }
+  if ($KeyEnvIndex -ge 0) {
+    $Lines[$KeyEnvIndex] = "    key_env: ZHANCLAW_API_KEY"
+  } else {
+    $Lines.Insert($ZhanIndex + 2, "    key_env: ZHANCLAW_API_KEY")
+    $ZhanEnd++
+  }
+
+  $ZhanEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ZhanIndex -Indent 2
+  $ModelsIndex = -1
+  for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s+models\s*:') {
+      $ModelsIndex = $Index
+      break
+    }
+  }
+  if ($ModelsIndex -lt 0) {
+    $ModelInsertIndex = $ZhanEnd
+    for ($Index = $ZhanIndex + 1; $Index -lt $ZhanEnd; $Index++) {
+      if ($Lines[$Index] -match '^\s+key_env\s*:') {
+        $ModelInsertIndex = $Index + 1
+        break
+      }
+      if ($Lines[$Index] -match '^\s+api\s*:') {
+        $ModelInsertIndex = $Index + 1
+      }
+    }
+    $Lines.Insert($ModelInsertIndex, "      - qwen3")
+    $Lines.Insert($ModelInsertIndex, "    models:")
+  } elseif ($Lines[$ModelsIndex] -match '^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$') {
+    if ($Matches[2] -notmatch '(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)') {
+      $InlineModels = $Matches[2].Trim()
+      $InlineComment = if ($Matches[3]) { $Matches[3] } else { "" }
+      if ($InlineModels) {
+        $Lines[$ModelsIndex] = "$($Matches[1])[$InlineModels, qwen3]$InlineComment"
+      } else {
+        $Lines[$ModelsIndex] = "$($Matches[1])[qwen3]$InlineComment"
+      }
+    }
+  } elseif ($Lines[$ModelsIndex] -match '^\s+models\s*:\s*$') {
+    $ModelsEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ModelsIndex -Indent 4
+    $HasQwen3Model = $false
+    for ($Index = $ModelsIndex + 1; $Index -lt $ModelsEnd; $Index++) {
+      if ($Lines[$Index] -match '^\s+(?:-\s*)?[''"]?qwen3[''"]?\s*(?::|#.*)?$') {
+        $HasQwen3Model = $true
+        break
+      }
+    }
+    if (-not $HasQwen3Model) {
+      $Lines.Insert($ModelsIndex + 1, "      - qwen3")
+    }
+  }
 }
 
 function Get-DotEnvValue {
@@ -1204,7 +1048,7 @@ function Get-DotEnvValue {
     }
   }
 
-  foreach ($Line in (Get-Content -Path $Path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+  foreach ($Line in (Get-Content -Path $Path -ErrorAction SilentlyContinue)) {
     if ($Line -notmatch '^\s*([^#=\s]+)\s*=\s*(.*)$') {
       continue
     }
@@ -1226,69 +1070,6 @@ function Get-DotEnvValue {
   }
 
   return $null
-}
-
-function New-HexSecret {
-  $Bytes = New-Object byte[] 32
-  $Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-  try {
-    $Rng.GetBytes($Bytes)
-  } finally {
-    $Rng.Dispose()
-  }
-  return ([System.BitConverter]::ToString($Bytes)).Replace("-", "").ToLowerInvariant()
-}
-
-function Test-WeakApiServerKey {
-  param(
-    [AllowNull()] [string] $Value
-  )
-
-  if (-not $Value) {
-    return $true
-  }
-  $Trimmed = $Value.Trim()
-  if ($Trimmed.Length -ge 2) {
-    $First = $Trimmed.Substring(0, 1)
-    $Last = $Trimmed.Substring($Trimmed.Length - 1, 1)
-    if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
-      $Trimmed = $Trimmed.Substring(1, $Trimmed.Length - 2)
-    }
-  }
-  return ($Trimmed -eq "clawpanel-local" -or $Trimmed.Length -lt 16)
-}
-
-function Ensure-ApiServerKey {
-  param(
-    [string] $EnvPath
-  )
-
-  $Lines = @()
-  if (Test-Path $EnvPath) {
-    $Lines = @(Get-Content -Path $EnvPath -Encoding UTF8 -ErrorAction Stop)
-  }
-
-  $ExistingValue = $null
-  foreach ($Line in $Lines) {
-    if ($Line -match '^\s*API_SERVER_KEY\s*=\s*(.*)$') {
-      $ExistingValue = $Matches[1].Trim()
-    }
-  }
-
-  if (-not (Test-WeakApiServerKey -Value $ExistingValue)) {
-    return
-  }
-
-  $FilteredLines = @($Lines | Where-Object { $_ -notmatch '^\s*API_SERVER_KEY\s*=' })
-  $NewKey = New-HexSecret
-  $OutputLines = @()
-  $OutputLines += $FilteredLines
-  if ($OutputLines.Count -gt 0 -and $OutputLines[$OutputLines.Count - 1] -ne "") {
-    $OutputLines += ""
-  }
-  $OutputLines += "API_SERVER_KEY=$NewKey"
-  Write-Utf8NoBomLines -Path $EnvPath -Lines $OutputLines
-  Write-Host "Generated a strong API_SERVER_KEY in $EnvPath."
 }
 
 function Import-ZhanClawEnvironmentFromLegacyDotEnv {
@@ -1313,7 +1094,7 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
     if ([Environment]::GetEnvironmentVariable($Target, "Process")) {
       continue
     }
-    if (-not $PortableMode -and (Get-TargetUserEnvironmentVariable -Name $Target)) {
+    if (-not $PortableMode -and [Environment]::GetEnvironmentVariable($Target, "User")) {
       continue
     }
     $LegacyNames = [string[]] $Mapping["Legacy"]
@@ -1332,7 +1113,7 @@ function Import-ZhanClawEnvironmentFromLegacyDotEnv {
     }
     Set-Item -Path ("Env:{0}" -f $Target) -Value $Value
     if (-not $PortableMode) {
-      Set-TargetUserEnvironmentVariable -Name $Target -Value $Value
+      [Environment]::SetEnvironmentVariable($Target, $Value, "User")
     }
     $SourceLabel = ($LegacyNames | Where-Object { $_ -ne $Target }) -join "/"
     Write-Host "Migrated $Target from legacy .env model setting ($SourceLabel)."
@@ -1351,6 +1132,178 @@ function Copy-LegacyHermesHomeFileIfMissing {
   }
   Copy-Item -Force $LegacyPath $TargetPath
   Write-Host "Migrated legacy Hermes $Label from $LegacyPath to $TargetPath."
+}
+
+function Remove-LegacyApiServerPort {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $Port = $null
+  for ($Index = $Lines.Count - 1; $Index -ge 0; $Index--) {
+    if ($Lines[$Index] -match '^api_server_port\s*:\s*([^#]+)?') {
+      $Candidate = $Matches[1]
+      if ($Candidate -and $Candidate.Trim()) {
+        $Port = $Candidate.Trim()
+      }
+      $Lines.RemoveAt($Index)
+    }
+  }
+  return $Port
+}
+
+function Ensure-ApiServerPlatformConfig {
+  param(
+    [System.Collections.Generic.List[string]] $Lines,
+    [AllowNull()] [string] $Port
+  )
+
+  $EffectivePort = if ($Port) { $Port } else { "8642" }
+
+  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
+  if ($PlatformsIndex -lt 0) {
+    if ($Lines.Count -gt 0 -and $Lines[($Lines.Count - 1)] -ne "") {
+      [void] $Lines.Add("")
+    }
+    [void] $Lines.Add("platforms:")
+    [void] $Lines.Add("  api_server:")
+    [void] $Lines.Add("    enabled: true")
+    [void] $Lines.Add("    extra:")
+    [void] $Lines.Add("      port: $EffectivePort")
+    return
+  }
+
+  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
+  $ApiServerIndex = -1
+  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
+      $ApiServerIndex = $Index
+      break
+    }
+  }
+
+  if ($ApiServerIndex -lt 0) {
+    $Lines.Insert($PlatformsIndex + 1, "      port: $EffectivePort")
+    $Lines.Insert($PlatformsIndex + 1, "    extra:")
+    $Lines.Insert($PlatformsIndex + 1, "    enabled: true")
+    $Lines.Insert($PlatformsIndex + 1, "  api_server:")
+    return
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $EnabledIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}enabled\s*:') {
+      $EnabledIndex = $Index
+      break
+    }
+  }
+  if ($EnabledIndex -ge 0) {
+    $Lines[$EnabledIndex] = "    enabled: true"
+  } else {
+    $Lines.Insert($ApiServerIndex + 1, "    enabled: true")
+    $EnabledIndex = $ApiServerIndex + 1
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $ExtraIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
+      $ExtraIndex = $Index
+      break
+    }
+  }
+
+  if ($ExtraIndex -lt 0) {
+    $InsertIndex = $EnabledIndex + 1
+    $Lines.Insert($InsertIndex, "    extra:")
+    $Lines.Insert($InsertIndex + 1, "      port: $EffectivePort")
+    return
+  }
+
+  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
+  $PortIndex = -1
+  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{6}port\s*:') {
+      $PortIndex = $Index
+      break
+    }
+  }
+  if ($PortIndex -ge 0) {
+    if ($Port) {
+      $Lines[$PortIndex] = "      port: $Port"
+    }
+  } else {
+    $Lines.Insert($ExtraIndex + 1, "      port: $EffectivePort")
+  }
+}
+
+function Get-ApiServerPlatformPort {
+  param(
+    [System.Collections.Generic.List[string]] $Lines
+  )
+
+  $PlatformsIndex = Find-TopLevelYamlKey -Lines $Lines -Key "platforms"
+  if ($PlatformsIndex -lt 0) {
+    return $null
+  }
+
+  $PlatformsEnd = Get-TopLevelYamlBlockEnd -Lines $Lines -StartIndex $PlatformsIndex
+  $ApiServerIndex = -1
+  for ($Index = $PlatformsIndex + 1; $Index -lt $PlatformsEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{2}api_server\s*:\s*(#.*)?$') {
+      $ApiServerIndex = $Index
+      break
+    }
+  }
+  if ($ApiServerIndex -lt 0) {
+    return $null
+  }
+
+  $ApiServerEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ApiServerIndex -Indent 2
+  $ExtraIndex = -1
+  for ($Index = $ApiServerIndex + 1; $Index -lt $ApiServerEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{4}extra\s*:\s*(#.*)?$') {
+      $ExtraIndex = $Index
+      break
+    }
+  }
+  if ($ExtraIndex -lt 0) {
+    return $null
+  }
+
+  $ExtraEnd = Get-YamlNestedBlockEnd -Lines $Lines -StartIndex $ExtraIndex -Indent 4
+  for ($Index = $ExtraIndex + 1; $Index -lt $ExtraEnd; $Index++) {
+    if ($Lines[$Index] -match '^\s{6}port\s*:\s*([^#]+)?') {
+      $Candidate = $Matches[1]
+      if ($Candidate -and $Candidate.Trim()) {
+        return $Candidate.Trim()
+      }
+      return $null
+    }
+  }
+  return $null
+}
+
+function Set-OfflineInstallerDefaultConfig {
+  param(
+    [string] $ConfigPath
+  )
+
+  $ConfigLines = @()
+  if (Test-Path $ConfigPath) {
+    $ConfigLines = @(Get-Content -Path $ConfigPath -ErrorAction Stop)
+  }
+  $MutableLines = New-StringList -Lines $ConfigLines
+  $LegacyApiServerPort = Remove-LegacyApiServerPort -Lines $MutableLines
+  Ensure-ModelProviderLine -Lines $MutableLines
+  Ensure-ZhanAiProviderBlock -Lines $MutableLines
+  Ensure-ApiServerPlatformConfig -Lines $MutableLines -Port $LegacyApiServerPort
+  $ApiServerPort = Get-ApiServerPlatformPort -Lines $MutableLines
+  $OutputLines = $MutableLines.ToArray()
+  Write-Utf8NoBomLines -Path $ConfigPath -Lines $OutputLines
+  Write-Host "Configured default model provider: custom:zhan_ai"
+  Write-Host "Configured API server platform port: $ApiServerPort"
 }
 
 $ShimDirs = @($BinDir)
@@ -1388,14 +1341,10 @@ if ($PortableMode) {
   Write-Host "Windows install root: $InstallRoot"
   Write-Host "Windows Hermes home: $HermesHome"
 }
-$InstallDirs = @($HermesHome) + $ShimDirs
+$InstallDirs = @($RuntimeDir, $HermesHome) + $ShimDirs
 New-Item -ItemType Directory -Force -Path $InstallDirs | Out-Null
-if ($IsUpgrade -and -not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
-  # Repair ACLs left by earlier installer builds before the upgrade reads
-  # config.yaml/.env: those builds could strip inheritance from Hermes home
-  # without granting Administrators, so config migration failed with
-  # PermissionError even when elevated.
-  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid -CurrentSid $CurrentUserSid
+if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
+  Grant-HermesHomeAccess -Path $HermesHome
 }
 
 $Wheelhouse = Join-Path $BundleDir "wheelhouse"
@@ -1407,21 +1356,8 @@ if (-not (Test-Path $BundledResources)) {
   throw "Missing Hermes runtime resources: $BundledResources"
 }
 
-$RuntimeBackupDir = $null
-$RuntimeInstallCommitted = $false
-$RuntimeRebuildStarted = $false
-try {
 Stop-ExistingHermesProcesses -InstallRoot $InstallRoot -RuntimeDir $RuntimeDir -HermesHome $HermesHome -ShimDirs $ProcessShimDirs
 Remove-HermesShimFiles -ShimDirs $LegacyShimDirs
-if (Test-Path $RuntimeDir) {
-  $RuntimeBackupDir = New-BackupPath -Path $RuntimeDir -Label "old"
-  Move-Item -Force $RuntimeDir $RuntimeBackupDir
-  $RuntimeRebuildStarted = $true
-  Write-Host "Backed up previous Hermes runtime: $RuntimeBackupDir"
-} else {
-  $RuntimeRebuildStarted = $true
-}
-New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $RuntimeResources, $VenvDir)) {
   Remove-InstallPath -Path $Path
 }
@@ -1478,47 +1414,37 @@ if (-not (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $null)) {
 }
 
 $FallbackPythonHome = if ($PythonRuntimeNeedsPythonHome) { $BundledPythonHome } else { $null }
-New-HermesVenv -PythonBin $PythonBin -VenvDir $VenvDir -FallbackPythonHome $FallbackPythonHome -BundledPythonHome $BundledPythonHome
+New-HermesVenv -PythonBin $PythonBin -VenvDir $VenvDir -FallbackPythonHome $FallbackPythonHome
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
 }
-$PipVersionResult = Invoke-HermesPipCommand -PythonBin $VenvPython -Arguments @("--version")
-if ($PipVersionResult.Output) {
-  Write-Host (($PipVersionResult.Output | Select-Object -Last 5) -join "`n")
-}
-if ($PipVersionResult.ExitCode -ne 0) {
-  throw "Python venv pip bootstrap did not complete correctly: $VenvDir`n$($PipVersionResult.Output -join "`n")"
-}
+$RuntimePackages = @(
+  "aiohttp==3.14.1",
+  "fastapi==0.133.1",
+  "python-multipart",
+  "uvicorn==0.41.0",
+  "websockets"
+)
 $HermesInstallSpec = "hermes-agent[all]"
-$InstallRequirements = @()
 $WheelhouseManifest = Join-Path $RuntimeWheelhouse "manifest.json"
-if (-not (Test-Path $WheelhouseManifest)) {
-  throw "Missing wheelhouse manifest: $WheelhouseManifest"
-}
-try {
-  $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest -Encoding UTF8 | ConvertFrom-Json
-  $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
-  if ($Extras.Count -gt 0) {
-    $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
-  } else {
-    $HermesInstallSpec = "hermes-agent"
+if (Test-Path $WheelhouseManifest) {
+  try {
+    $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest | ConvertFrom-Json
+    $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
+    if ($Extras.Count -gt 0) {
+      $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
+    } else {
+      $HermesInstallSpec = "hermes-agent"
+    }
+  } catch {
+    Write-Warning "Could not parse wheelhouse manifest. Falling back to $HermesInstallSpec. Error: $($_.Exception.Message)"
   }
-  $InstallRequirements = @($WheelhouseMeta.install_requirements) | Where-Object { $_ }
-  if ($InstallRequirements.Count -eq 0) {
-    throw "wheelhouse manifest has no install_requirements"
-  }
-} catch {
-  throw "Could not parse wheelhouse manifest. Error: $($_.Exception.Message)"
 }
 Write-Host "Installing Hermes package spec: $HermesInstallSpec"
-$PipInstallArguments = @("install", "--only-binary=:all:", "--no-index", "--find-links", $RuntimeWheelhouse, $HermesInstallSpec) + $InstallRequirements
-$PipInstallResult = Invoke-HermesPipCommand -PythonBin $VenvPython -Arguments $PipInstallArguments
-if ($PipInstallResult.Output) {
-  Write-Host (($PipInstallResult.Output | Select-Object -Last 80) -join "`n")
-}
-if ($PipInstallResult.ExitCode -ne 0) {
-  throw "pip install failed with exit code $($PipInstallResult.ExitCode).`n$($PipInstallResult.Output -join "`n")"
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse $HermesInstallSpec croniter @RuntimePackages
+if ($LASTEXITCODE -ne 0) {
+  throw "pip install failed with exit code $LASTEXITCODE."
 }
 & $VenvPython -c "import aiohttp, fastapi, multipart, uvicorn, websockets"
 if ($LASTEXITCODE -ne 0) {
@@ -1574,8 +1500,8 @@ $HermesShimDefaultEnvironmentLines = @($HermesDefaultEnvironment.GetEnumerator()
   'if not defined {0} set "{0}={1}"' -f $_.Key, $_.Value
 })
 $HermesShimUserEnvironmentLines = @(
-  'if not defined ZHANCLAW_BASE_URL for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
-  'if not defined ZHANCLAW_API_KEY for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
+  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
+  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
 )
 $ShimLines = @(
   "@echo off",
@@ -1611,21 +1537,18 @@ $UninstallShimLines = @(
 $ExeShimTemplate = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.exe" -f ([System.Guid]::NewGuid().ToString("N")))
 New-HermesExeShimTemplate -OutputPath $ExeShimTemplate
 foreach ($ShimDir in $ShimDirs) {
-  # UTF-8 without BOM: cmd.exe misparses a BOM on the first line, and the
-  # shims switch to code page 65001 before any line that embeds a path, so
-  # non-ASCII install locations survive intact.
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes.cmd") -Lines $ShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes.bat") -Lines $ShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "dashboard.cmd") -Lines $DashboardShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "dashboard.bat") -Lines $DashboardShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Lines $DashboardShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Lines $DashboardShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-launch.cmd") -Lines $LaunchShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-launch.bat") -Lines $LaunchShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Lines $ShutdownShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Lines $ShutdownShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Lines $UninstallShimLines
-  Write-Utf8NoBomLines -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Lines $UninstallShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes.cmd") -Encoding ASCII -Value $ShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes.bat") -Encoding ASCII -Value $ShimLines
+  Set-Content -Path (Join-Path $ShimDir "dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.cmd") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-dashboard.bat") -Encoding ASCII -Value $DashboardShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-launch.cmd") -Encoding ASCII -Value $LaunchShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-launch.bat") -Encoding ASCII -Value $LaunchShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.cmd") -Encoding ASCII -Value $ShutdownShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-shutdown.bat") -Encoding ASCII -Value $ShutdownShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.cmd") -Encoding ASCII -Value $UninstallShimLines
+  Set-Content -Path (Join-Path $ShimDir "hermes-uninstall.bat") -Encoding ASCII -Value $UninstallShimLines
   Install-HermesExeShim -ShimDir $ShimDir -TemplatePath $ExeShimTemplate
 }
 Remove-Item -Force $ExeShimTemplate -ErrorAction SilentlyContinue
@@ -1633,7 +1556,7 @@ $HermesCmd = Join-Path $BinDir "hermes.cmd"
 foreach ($Entry in $HermesInstallerEnvironment.GetEnumerator()) {
   Set-Item -Path ("Env:{0}" -f $Entry.Key) -Value $Entry.Value
   if (-not $PortableMode) {
-    Set-TargetUserEnvironmentVariable -Name $Entry.Key -Value $Entry.Value
+    [Environment]::SetEnvironmentVariable($Entry.Key, $Entry.Value, "User")
   }
 }
 foreach ($Entry in $HermesDefaultEnvironment.GetEnumerator()) {
@@ -1643,7 +1566,7 @@ foreach ($Entry in $HermesDefaultEnvironment.GetEnumerator()) {
 }
 foreach ($ZhanEnvName in @("ZHANCLAW_BASE_URL", "ZHANCLAW_API_KEY")) {
   if (-not [Environment]::GetEnvironmentVariable($ZhanEnvName, "Process")) {
-    $ZhanEnvValue = Get-TargetUserEnvironmentVariable -Name $ZhanEnvName
+    $ZhanEnvValue = [Environment]::GetEnvironmentVariable($ZhanEnvName, "User")
     if ($ZhanEnvValue) {
       Set-Item -Path ("Env:{0}" -f $ZhanEnvName) -Value $ZhanEnvValue
     }
@@ -1658,14 +1581,7 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $Legacy
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
-$ConfigureConfigScript = Join-Path $BundleDir "scripts\configure_config.py"
-if (-not (Test-Path $ConfigureConfigScript)) {
-  throw "Missing config migration script: $ConfigureConfigScript"
-}
-& $VenvPython $ConfigureConfigScript $ConfigPath
-if ($LASTEXITCODE -ne 0) {
-  throw "Config migration failed with exit code $LASTEXITCODE."
-}
+Set-OfflineInstallerDefaultConfig -ConfigPath $ConfigPath
 
 $EnvPath = Join-Path $HermesHome ".env"
 $LegacyEnvPath = Join-Path $LegacyHermesHome ".env"
@@ -1675,7 +1591,6 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $Legacy
 if (-not (Test-Path $EnvPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "env.template") $EnvPath
 }
-Ensure-ApiServerKey -EnvPath $EnvPath
 $ZhanEnvImportPaths = @($EnvPath)
 if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnvPath)) {
   $ZhanEnvImportPaths += $LegacyEnvPath
@@ -1683,14 +1598,10 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnv
 Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPaths $ZhanEnvImportPaths -PortableMode $PortableMode
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
-if (-not $PortableMode -and (Test-PathUnderRoot -Path $HermesHome -Root $DefaultProgramDataRoot)) {
-  Set-HermesHomeAccess -Path $HermesHome -UserSid $TargetUserSid -CurrentSid $CurrentUserSid
-}
 
 if (-not $PortableMode) {
   Remove-UserPathEntries -Paths @($LegacyOfflineBinDir)
-  $UserPath = Get-TargetUserEnvironmentVariable -Name "Path" -DoNotExpand
-  $UserPathKind = Get-TargetUserEnvironmentValueKind -Name "Path"
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (($UserPath -split ";") -notcontains $BinDir) {
     $PathParts = @()
     if ($UserPath) {
@@ -1700,7 +1611,7 @@ if (-not $PortableMode) {
       $PathParts += $BinDir
     }
     $NewUserPath = ($PathParts | Select-Object -Unique) -join ";"
-    Set-TargetUserEnvironmentVariable -Name "Path" -Value $NewUserPath -Kind $UserPathKind
+    [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
   }
 }
 
@@ -1710,15 +1621,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Start-HermesDashboardAfterInstall -HermesCmd $HermesCmd -Port 9119
-
-$RuntimeInstallCommitted = $true
-if ($RuntimeBackupDir -and (Test-Path $RuntimeBackupDir)) {
-  try {
-    Remove-InstallPath -Path $RuntimeBackupDir
-  } catch {
-    Write-Warning "Hermes was upgraded, but the previous runtime backup could not be removed: $RuntimeBackupDir. Error: $($_.Exception.Message)"
-  }
-}
 
 Write-Host "Hermes Agent installed."
 Write-Host "shim: $HermesCmd"
@@ -1737,15 +1639,4 @@ if ($PortableMode) {
   Write-Host "Use launch.cmd from this extracted folder to start Hermes without changing User PATH."
 } else {
   Write-Host "Please reopen PowerShell for PATH changes to take effect."
-}
-} catch {
-  if (-not $RuntimeInstallCommitted) {
-    Write-Warning "Hermes install/upgrade failed. Restoring the previous runtime if one was backed up."
-    if ($RuntimeBackupDir) {
-      Restore-RuntimeBackup -RuntimeDir $RuntimeDir -RuntimeBackupDir $RuntimeBackupDir
-    } elseif ($RuntimeRebuildStarted -and (Test-Path $RuntimeDir)) {
-      Remove-InstallPath -Path $RuntimeDir
-    }
-  }
-  throw
 }

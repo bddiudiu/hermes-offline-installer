@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,109 +26,7 @@ RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
 RUNTIME_BUNDLE="$RUNTIME_DIR/bundle-runtime"
 RUNTIME_RESOURCES="$RUNTIME_DIR/hermes-resources"
 
-mkdir -p "$BIN_DIR" "$HERMES_HOME"
-
-RUNTIME_BACKUP_DIR=""
-RUNTIME_INSTALL_COMMITTED=0
-
-restore_runtime_on_error() {
-  local exit_code=$?
-  if [ "${RUNTIME_INSTALL_COMMITTED:-0}" = "1" ]; then
-    exit "$exit_code"
-  fi
-
-  echo "Hermes install/upgrade failed. Restoring the previous runtime if one was backed up." >&2
-  if [ -n "${RUNTIME_BACKUP_DIR:-}" ] && [ -d "$RUNTIME_BACKUP_DIR" ]; then
-    rm -rf "$RUNTIME_DIR"
-    mv "$RUNTIME_BACKUP_DIR" "$RUNTIME_DIR"
-    echo "Restored previous Hermes runtime: $RUNTIME_DIR" >&2
-  elif [ -z "${RUNTIME_BACKUP_DIR:-}" ] && [ -d "$RUNTIME_DIR" ]; then
-    rm -rf "$RUNTIME_DIR"
-  fi
-  exit "$exit_code"
-}
-
-backup_existing_runtime() {
-  if [ ! -d "$RUNTIME_DIR" ]; then
-    mkdir -p "$RUNTIME_DIR"
-    return
-  fi
-
-  local parent
-  local name
-  local timestamp
-  local candidate
-  local index
-  parent="$(dirname "$RUNTIME_DIR")"
-  name="$(basename "$RUNTIME_DIR")"
-  timestamp="$(date +%Y%m%d%H%M%S)"
-  candidate="$parent/$name.old.$timestamp"
-  index=0
-  while [ -e "$candidate" ]; do
-    index=$((index + 1))
-    candidate="$parent/$name.old.$timestamp.$index"
-  done
-
-  RUNTIME_BACKUP_DIR="$candidate"
-  mv "$RUNTIME_DIR" "$RUNTIME_BACKUP_DIR"
-  echo "Backed up previous Hermes runtime: $RUNTIME_BACKUP_DIR"
-  mkdir -p "$RUNTIME_DIR"
-}
-
-generate_api_server_key() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-    return
-  fi
-  od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
-  printf '\n'
-}
-
-dotenv_value_is_weak() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  if [ "${#value}" -ge 2 ]; then
-    case "$value" in
-      \"*\") value="${value#\"}"; value="${value%\"}" ;;
-      \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-  fi
-  [ -z "$value" ] || [ "$value" = "clawpanel-local" ] || [ "${#value}" -lt 16 ]
-}
-
-ensure_api_server_key() {
-  local env_path="$1"
-  local existing_value=""
-  local line
-  if [ -f "$env_path" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      if [[ "$line" =~ ^[[:space:]]*API_SERVER_KEY[[:space:]]*= ]]; then
-        existing_value="${line#*=}"
-      fi
-    done < "$env_path"
-  fi
-
-  if ! dotenv_value_is_weak "$existing_value"; then
-    return
-  fi
-
-  local new_key
-  local tmp_path
-  new_key="$(generate_api_server_key)"
-  tmp_path="${env_path}.tmp.$$"
-  if [ -f "$env_path" ]; then
-    grep -vE '^[[:space:]]*API_SERVER_KEY[[:space:]]*=' "$env_path" > "$tmp_path" || true
-  else
-    : > "$tmp_path"
-  fi
-  if [ -s "$tmp_path" ] && [ "$(tail -c 1 "$tmp_path")" != "" ]; then
-    printf '\n' >> "$tmp_path"
-  fi
-  printf 'API_SERVER_KEY=%s\n' "$new_key" >> "$tmp_path"
-  mv "$tmp_path" "$env_path"
-  echo "Generated a strong API_SERVER_KEY in $env_path."
-}
+mkdir -p "$RUNTIME_DIR" "$BIN_DIR" "$HERMES_HOME"
 
 sync_bundled_skills() {
   mkdir -p "$HERMES_HOME/skills"
@@ -165,7 +63,302 @@ sync_bundled_skills() {
 
 configure_default_config() {
   local config_path="$1"
-  "$PYTHON_BIN" "$BUNDLE_DIR/scripts/configure_config.py" "$config_path"
+  "$PYTHON_BIN" - "$config_path" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def find_top_level_key(key):
+    pattern = re.compile(rf"^{re.escape(key)}:\s*(#.*)?$")
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            return index
+    return -1
+
+
+def top_level_block_end(start):
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+            return index
+    return len(lines)
+
+
+def nested_block_end(start, indent):
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        leading = len(line) - len(line.lstrip(" "))
+        if leading <= indent:
+            return index
+    return len(lines)
+
+
+def ensure_model_provider():
+    model_index = find_top_level_key("model")
+    if model_index < 0:
+        lines[0:0] = ["model:", "  default: qwen3", "  provider: custom:zhan_ai", ""]
+        return
+
+    model_end = top_level_block_end(model_index)
+    default_index = -1
+    provider_index = -1
+    for index in range(model_index + 1, model_end):
+        if re.match(r"^\s+default\s*:", lines[index]):
+            default_index = index
+        if re.match(r"^\s+provider\s*:", lines[index]):
+            provider_index = index
+
+    if default_index < 0:
+        lines.insert(model_index + 1, "  default: qwen3")
+        model_end += 1
+        default_index = model_index + 1
+    elif (
+        re.match(r"^\s+default\s*:\s*([#].*)?$", lines[default_index])
+        or re.match(r"^\s+default\s*:\s*['\"]?gpt-4o-mini['\"]?\s*(#.*)?$", lines[default_index])
+    ):
+        lines[default_index] = "  default: qwen3"
+
+    provider_index = -1
+    for index in range(model_index + 1, model_end):
+        if re.match(r"^\s+provider\s*:", lines[index]):
+            provider_index = index
+            break
+
+    if provider_index >= 0:
+        lines[provider_index] = "  provider: custom:zhan_ai"
+    else:
+        lines.insert(default_index + 1, "  provider: custom:zhan_ai")
+
+
+def ensure_zhan_ai_provider():
+    providers_index = find_top_level_key("providers")
+    if providers_index < 0:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend([
+            "providers:",
+            "  zhan_ai:",
+            '    api: "${ZHANCLAW_BASE_URL}"',
+            "    key_env: ZHANCLAW_API_KEY",
+            "    models:",
+            "      - qwen3",
+        ])
+        return
+
+    providers_end = top_level_block_end(providers_index)
+    zhan_index = -1
+    for index in range(providers_index + 1, providers_end):
+        if re.match(r"^\s{2}zhan_ai\s*:\s*(#.*)?$", lines[index]):
+            zhan_index = index
+            break
+
+    if zhan_index < 0:
+        lines[providers_index + 1:providers_index + 1] = [
+            "  zhan_ai:",
+            '    api: "${ZHANCLAW_BASE_URL}"',
+            "    key_env: ZHANCLAW_API_KEY",
+            "    models:",
+            "      - qwen3",
+        ]
+        return
+
+    zhan_end = nested_block_end(zhan_index, 2)
+    api_index = -1
+    key_env_index = -1
+    for index in range(zhan_index + 1, zhan_end):
+        if re.match(r"^\s+api\s*:", lines[index]):
+            api_index = index
+        if re.match(r"^\s+key_env\s*:", lines[index]):
+            key_env_index = index
+
+    if api_index >= 0:
+        lines[api_index] = '    api: "${ZHANCLAW_BASE_URL}"'
+    else:
+        lines.insert(zhan_index + 1, '    api: "${ZHANCLAW_BASE_URL}"')
+        zhan_end += 1
+
+    key_env_index = -1
+    for index in range(zhan_index + 1, zhan_end):
+        if re.match(r"^\s+key_env\s*:", lines[index]):
+            key_env_index = index
+            break
+
+    if key_env_index >= 0:
+        lines[key_env_index] = "    key_env: ZHANCLAW_API_KEY"
+    else:
+        lines.insert(zhan_index + 2, "    key_env: ZHANCLAW_API_KEY")
+        zhan_end += 1
+
+    zhan_end = nested_block_end(zhan_index, 2)
+    models_index = -1
+    for index in range(zhan_index + 1, zhan_end):
+        if re.match(r"^\s+models\s*:", lines[index]):
+            models_index = index
+            break
+
+    if models_index < 0:
+        model_insert_index = zhan_end
+        for index in range(zhan_index + 1, zhan_end):
+            if re.match(r"^\s+key_env\s*:", lines[index]):
+                model_insert_index = index + 1
+                break
+            if re.match(r"^\s+api\s*:", lines[index]):
+                model_insert_index = index + 1
+        lines[model_insert_index:model_insert_index] = [
+            "    models:",
+            "      - qwen3",
+        ]
+    else:
+        inline_match = re.match(r"^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$", lines[models_index])
+        if inline_match:
+            has_inline_qwen3 = re.search(r"(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)", inline_match.group(2))
+        else:
+            has_inline_qwen3 = False
+        if inline_match and not has_inline_qwen3:
+            inline_models = inline_match.group(2).strip()
+            inline_comment = inline_match.group(3) or ""
+            if inline_models:
+                lines[models_index] = f"{inline_match.group(1)}[{inline_models}, qwen3]{inline_comment}"
+            else:
+                lines[models_index] = f"{inline_match.group(1)}[qwen3]{inline_comment}"
+        elif re.match(r"^\s+models\s*:\s*$", lines[models_index]):
+            models_end = nested_block_end(models_index, 4)
+            has_qwen3_model = any(
+                re.match(r"^\s+(?:-\s*)?[\"']?qwen3[\"']?\s*(?::|#.*)?$", lines[index])
+                for index in range(models_index + 1, models_end)
+            )
+            if not has_qwen3_model:
+                lines.insert(models_index + 1, "      - qwen3")
+
+
+def remove_legacy_api_server_port():
+    legacy_port = None
+    kept = []
+    for line in lines:
+        match = re.match(r"^api_server_port\s*:\s*([^#]+)?", line)
+        if match:
+            candidate = (match.group(1) or "").strip()
+            if candidate:
+                legacy_port = candidate
+            continue
+        kept.append(line)
+    lines[:] = kept
+    return legacy_port
+
+
+def ensure_api_server_platform(port):
+    effective_port = port or "8642"
+    platforms_index = find_top_level_key("platforms")
+    if platforms_index < 0:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend([
+            "platforms:",
+            "  api_server:",
+            "    enabled: true",
+            "    extra:",
+            f"      port: {effective_port}",
+        ])
+        return
+
+    platforms_end = top_level_block_end(platforms_index)
+    api_server_index = -1
+    for index in range(platforms_index + 1, platforms_end):
+        if re.match(r"^\s{2}api_server\s*:\s*(#.*)?$", lines[index]):
+            api_server_index = index
+            break
+
+    if api_server_index < 0:
+        lines[platforms_index + 1:platforms_index + 1] = [
+            "  api_server:",
+            "    enabled: true",
+            "    extra:",
+            f"      port: {effective_port}",
+        ]
+        return
+
+    api_server_end = nested_block_end(api_server_index, 2)
+    enabled_index = -1
+    for index in range(api_server_index + 1, api_server_end):
+        if re.match(r"^\s{4}enabled\s*:", lines[index]):
+            enabled_index = index
+            break
+    if enabled_index >= 0:
+        lines[enabled_index] = "    enabled: true"
+    else:
+        lines.insert(api_server_index + 1, "    enabled: true")
+        enabled_index = api_server_index + 1
+
+    api_server_end = nested_block_end(api_server_index, 2)
+    extra_index = -1
+    for index in range(api_server_index + 1, api_server_end):
+        if re.match(r"^\s{4}extra\s*:\s*(#.*)?$", lines[index]):
+            extra_index = index
+            break
+
+    if extra_index < 0:
+        lines[enabled_index + 1:enabled_index + 1] = [
+            "    extra:",
+            f"      port: {effective_port}",
+        ]
+        return
+
+    extra_end = nested_block_end(extra_index, 4)
+    port_index = -1
+    for index in range(extra_index + 1, extra_end):
+        if re.match(r"^\s{6}port\s*:", lines[index]):
+            port_index = index
+            break
+    if port_index >= 0:
+        if port:
+            lines[port_index] = f"      port: {port}"
+    else:
+        lines.insert(extra_index + 1, f"      port: {effective_port}")
+
+
+def get_api_server_platform_port():
+    platforms_index = find_top_level_key("platforms")
+    if platforms_index < 0:
+        return ""
+    platforms_end = top_level_block_end(platforms_index)
+    api_server_index = -1
+    for index in range(platforms_index + 1, platforms_end):
+        if re.match(r"^\s{2}api_server\s*:\s*(#.*)?$", lines[index]):
+            api_server_index = index
+            break
+    if api_server_index < 0:
+        return ""
+    api_server_end = nested_block_end(api_server_index, 2)
+    extra_index = -1
+    for index in range(api_server_index + 1, api_server_end):
+        if re.match(r"^\s{4}extra\s*:\s*(#.*)?$", lines[index]):
+            extra_index = index
+            break
+    if extra_index < 0:
+        return ""
+    extra_end = nested_block_end(extra_index, 4)
+    for index in range(extra_index + 1, extra_end):
+        match = re.match(r"^\s{6}port\s*:\s*([^#]+)?", lines[index])
+        if match:
+            return (match.group(1) or "").strip()
+    return ""
+
+
+legacy_port = remove_legacy_api_server_port()
+ensure_model_provider()
+ensure_zhan_ai_provider()
+ensure_api_server_platform(legacy_port)
+api_server_port = get_api_server_platform_port()
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print("Configured default model provider: custom:zhan_ai")
+print(f"Configured API server platform port: {api_server_port}")
+PY
 }
 
 if [ ! -d "$BUNDLE_DIR/wheelhouse" ]; then
@@ -177,8 +370,6 @@ if [ ! -d "$BUNDLE_DIR/hermes-resources" ]; then
   exit 1
 fi
 
-trap restore_runtime_on_error ERR
-backup_existing_runtime
 rm -rf "$RUNTIME_WHEELHOUSE" "$RUNTIME_TEMPLATES" "$RUNTIME_BUNDLE" "$RUNTIME_RESOURCES" "$VENV_DIR"
 cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_WHEELHOUSE"
 cp -R "$BUNDLE_DIR/templates" "$RUNTIME_TEMPLATES"
@@ -216,13 +407,16 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
+RUNTIME_PACKAGES=(
+  "aiohttp==3.14.1"
+  "fastapi==0.133.1"
+  "python-multipart"
+  "uvicorn==0.41.0"
+  "websockets"
+)
 HERMES_INSTALL_SPEC="hermes-agent[all]"
-INSTALL_REQUIREMENTS=()
-if [ ! -f "$RUNTIME_WHEELHOUSE/manifest.json" ]; then
-  echo "缺少 wheelhouse manifest: $RUNTIME_WHEELHOUSE/manifest.json" >&2
-  exit 1
-fi
-HERMES_INSTALL_SPEC="$("$PYTHON_BIN" - "$RUNTIME_WHEELHOUSE/manifest.json" <<'PY'
+if [ -f "$RUNTIME_WHEELHOUSE/manifest.json" ]; then
+  HERMES_INSTALL_SPEC="$("$PYTHON_BIN" - "$RUNTIME_WHEELHOUSE/manifest.json" <<'PY'
 import json
 import sys
 
@@ -232,23 +426,9 @@ extras = [item for item in data.get("extras", []) if item]
 print(f"hermes-agent[{','.join(extras)}]" if extras else "hermes-agent")
 PY
 )"
-while IFS= read -r requirement; do
-  INSTALL_REQUIREMENTS+=("$requirement")
-done < <("$PYTHON_BIN" - "$RUNTIME_WHEELHOUSE/manifest.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    data = json.load(fh)
-requirements = [item for item in data.get("install_requirements", []) if item]
-if not requirements:
-    raise SystemExit("wheelhouse manifest has no install_requirements")
-for requirement in requirements:
-    print(requirement)
-PY
-)
+fi
 echo "Installing Hermes package spec: $HERMES_INSTALL_SPEC"
-"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" "$HERMES_INSTALL_SPEC" "${INSTALL_REQUIREMENTS[@]}"
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" "$HERMES_INSTALL_SPEC" croniter "${RUNTIME_PACKAGES[@]}"
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
@@ -311,15 +491,9 @@ configure_default_config "$HERMES_HOME/config.yaml"
 if [ ! -f "$HERMES_HOME/.env" ]; then
   cp "$RUNTIME_TEMPLATES/env.template" "$HERMES_HOME/.env"
 fi
-ensure_api_server_key "$HERMES_HOME/.env"
 
 sync_bundled_skills
 "$BIN_DIR/hermes" version
-RUNTIME_INSTALL_COMMITTED=1
-trap - ERR
-if [ -n "$RUNTIME_BACKUP_DIR" ] && [ -d "$RUNTIME_BACKUP_DIR" ]; then
-  rm -rf "$RUNTIME_BACKUP_DIR" || echo "Hermes was upgraded, but the previous runtime backup could not be removed: $RUNTIME_BACKUP_DIR" >&2
-fi
 
 echo "Hermes Agent 已安装。"
 echo "shim: $BIN_DIR/hermes"

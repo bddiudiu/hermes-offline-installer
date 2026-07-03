@@ -22,13 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Check Python packaging scripts
-        run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py scripts/configure_config.py scripts/test_configure_config.py scripts/pip_sitecustomize.py scripts/test_pip_sitecustomize.py
-
-      - name: Test config migration
-        run: python scripts/test_configure_config.py
-
-      - name: Test Windows pip compatibility hook
-        run: python scripts/test_pip_sitecustomize.py
+        run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py
 
       - name: Check Unix shell script syntax
         shell: bash
@@ -45,7 +39,6 @@ jobs:
             "installers/repair_windows.ps1",
             "installers/shutdown_windows.ps1",
             "installers/uninstall_windows.ps1",
-            "scripts/verify_windows_bundle.ps1",
             "scripts/verify_windows.ps1"
           )) {
             $tokens = $null

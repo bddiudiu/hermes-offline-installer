@@ -28,11 +28,6 @@ OFFLINE_RUNTIME_REQUIREMENTS = [
     "websockets",
 ]
 
-OFFLINE_INSTALL_REQUIREMENTS = [
-    "croniter",
-    *OFFLINE_RUNTIME_REQUIREMENTS,
-]
-
 OFFLINE_REQUIRED_WHEELS = [
     "aiohttp",
     "fastapi",
@@ -318,7 +313,7 @@ def main() -> None:
     export_hermes_resources(hermes_source.source_dir, output)
 
     requirements = output / "requirements.txt"
-    requirement_lines = [hermes_spec, "setuptools>=61.0", *OFFLINE_INSTALL_REQUIREMENTS]
+    requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
     requirements.write_text("\n".join(requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
@@ -363,7 +358,6 @@ def main() -> None:
             "hermes_resolved_spec": hermes_source.spec,
             "hermes_source_commit": git_commit(hermes_source.source_dir),
             "extras": args.extras.split(",") if args.extras else [],
-            "install_requirements": OFFLINE_INSTALL_REQUIREMENTS,
         },
     )
 

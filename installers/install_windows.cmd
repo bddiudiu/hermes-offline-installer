@@ -59,17 +59,11 @@ call :is_admin
 if "%ERRORLEVEL%"=="0" exit /b 0
 call :uses_custom_offline_home
 if "%HERMES_CUSTOM_OFFLINE_HOME%"=="1" exit /b 0
-call :capture_installer_user_sid
 echo Requesting administrator privileges for the default Program Files installation...
-set "HERMES_ELEVATED_COMMAND=/d /k set HERMES_INSTALLER_KEEP_OPEN=1 ^&^& set HERMES_INSTALLER_USER_SID=%HERMES_INSTALLER_USER_SID% ^&^& ""%~f0"" %*"
+set "HERMES_ELEVATED_COMMAND=/d /k set HERMES_INSTALLER_KEEP_OPEN=1 ^&^& ""%~f0"" %*"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:ComSpec -ArgumentList $env:HERMES_ELEVATED_COMMAND -Verb RunAs"
 if not "%ERRORLEVEL%"=="0" exit /b %ERRORLEVEL%
 set "HERMES_ELEVATION_STARTED=1"
-exit /b 0
-
-:capture_installer_user_sid
-if defined HERMES_INSTALLER_USER_SID exit /b 0
-for /f "usebackq delims=" %%A in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value" 2^>nul`) do set "HERMES_INSTALLER_USER_SID=%%A"
 exit /b 0
 
 :detect_portable
