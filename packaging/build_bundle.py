@@ -12,7 +12,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from manifest import PYTHON_VERSION, UV_VERSION, write_manifest
+from manifest import PYTHON_VERSION, UV_VERSION, WINDOWS_PYTHON_VERSION, write_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_STDLIB_ZIP = f"python{''.join(PYTHON_VERSION.split('.')[:2])}.zip"
@@ -73,7 +73,10 @@ def prepare_uv(platform_name: str, bundle: Path) -> None:
     download(url, archive)
 
 
-def prepare_python_runtime(bundle: Path) -> None:
+def prepare_python_runtime(platform_name: str, bundle: Path) -> None:
+    if platform_name.startswith("win"):
+        prepare_windows_python_runtime(bundle)
+        return
     python_dest = bundle / "runtime" / "python"
     uv_python_dir = Path(os.environ.get("UV_PYTHON_INSTALL_DIR", ROOT / ".bundle-work" / "uv-python"))
     os.environ["UV_PYTHON_INSTALL_DIR"] = str(uv_python_dir)
@@ -82,6 +85,29 @@ def prepare_python_runtime(bundle: Path) -> None:
     if not candidates:
         raise SystemExit(f"未找到 uv 安装的 Python runtime: {uv_python_dir}")
     copytree(candidates[-1], python_dest)
+
+
+def prepare_windows_python_runtime(bundle: Path) -> None:
+    # Windows 必须使用 python.org 官方签名构建(NuGet 分发):python-build-standalone
+    # 的二进制没有 Authenticode 签名,会被应用程序控制策略(智能应用控制 / WDAC)拦截。
+    python_dest = bundle / "runtime" / "python"
+    work = ROOT / ".bundle-work"
+    nupkg = work / f"python.{WINDOWS_PYTHON_VERSION}.nupkg"
+    if not nupkg.exists():
+        download(
+            "https://api.nuget.org/v3-flatcontainer/python/"
+            f"{WINDOWS_PYTHON_VERSION}/python.{WINDOWS_PYTHON_VERSION}.nupkg",
+            nupkg,
+        )
+    extract_dir = work / f"python-nuget-{WINDOWS_PYTHON_VERSION}"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    with zipfile.ZipFile(nupkg) as zf:
+        zf.extractall(extract_dir)
+    tools = extract_dir / "tools"
+    if not (tools / "python.exe").is_file():
+        raise SystemExit(f"NuGet python 包缺少 tools/python.exe: {nupkg}")
+    copytree(tools, python_dest)
 
 
 def validate_python_runtime(platform_name: str, bundle: Path) -> None:
@@ -118,6 +144,40 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
         cwd=bundle,
         env=env,
     )
+    if platform_name.startswith("win"):
+        validate_windows_python_signatures(python.parent)
+
+
+def validate_windows_python_signatures(python_home: Path) -> None:
+    # 应用程序控制策略按签名放行,这里锁死关键二进制必须带有效 Authenticode 签名,
+    # 防止运行时来源回退到无签名构建。
+    stdlib_dll = f"python{''.join(WINDOWS_PYTHON_VERSION.split('.')[:2])}.dll"
+    critical = [
+        python_home / "python.exe",
+        python_home / "python3.dll",
+        python_home / stdlib_dll,
+        python_home / "DLLs" / "_ctypes.pyd",
+        *sorted((python_home / "DLLs").glob("libffi*.dll")),
+    ]
+    missing = [str(path) for path in critical if not path.is_file()]
+    if missing:
+        raise SystemExit("Windows Python runtime 缺少关键文件: " + ", ".join(missing))
+    joined = ", ".join(f"'{path}'" for path in critical)
+    script = (
+        f"$bad = @({joined}) | Where-Object {{ "
+        "(Get-AuthenticodeSignature -FilePath $_).Status -ne 'Valid' }; "
+        "if ($bad) { $bad | ForEach-Object { Write-Output $_ }; exit 1 }"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "Windows Python runtime 存在无效 Authenticode 签名(会被应用程序控制策略拦截):\n"
+            + (result.stdout or "") + (result.stderr or "")
+        )
 
 
 def validate_hermes_resources(resources: Path) -> None:
@@ -243,13 +303,16 @@ def main() -> None:
         shutil.copy2(bundle / "installers" / "uninstall_windows.cmd", bundle / "uninstall.cmd")
 
     prepare_uv(args.platform, bundle)
-    prepare_python_runtime(bundle)
+    prepare_python_runtime(args.platform, bundle)
     validate_python_runtime(args.platform, bundle)
     write_manifest(
         bundle / "manifest.json",
         target_platform=args.platform,
         extra={
             "kind": "bundle",
+            "python_version": (
+                WINDOWS_PYTHON_VERSION if args.platform.startswith("win") else PYTHON_VERSION
+            ),
             "wheelhouse": wheelhouse_manifest,
             "hermes_version": wheelhouse_manifest.get("hermes_version"),
             "hermes_extras": wheelhouse_manifest.get("extras"),
