@@ -63,6 +63,11 @@ jobs:
         shell: bash
         run: python packaging/build_bundle.py --platform "${{ matrix.target }}" --wheelhouse build/wheelhouse --output dist
 
+      - name: Smoke test Windows bundle
+        if: matrix.target == 'win-x64'
+        shell: pwsh
+        run: ./scripts/verify_windows_bundle.ps1 -Archive "dist/hermes-offline-installer-${{ matrix.target }}.zip"
+
       - name: Generate checksums
         shell: bash
         working-directory: dist

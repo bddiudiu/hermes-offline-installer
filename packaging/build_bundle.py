@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -35,6 +36,32 @@ HERMES_RESOURCE_SENTINELS = [
     "tui_dist/dist/entry.js",
     "tui_dist/package.json",
 ]
+
+PYTHON_RUNTIME_IMPORT_CHECK = "import ctypes, encodings, ensurepip, venv"
+
+WINDOWS_PYTHON_RUNTIME_SMOKE = r"""
+import ctypes
+import encodings
+import ensurepip
+import os
+import subprocess
+import sys
+import tempfile
+import venv
+from pathlib import Path
+
+print(f"Python executable: {sys.executable}")
+print(f"ctypes module: {ctypes.__file__}")
+
+with tempfile.TemporaryDirectory(prefix="hermes-runtime-smoke-") as tmp:
+    venv_dir = Path(tmp) / "venv"
+    venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
+    venv_python = venv_dir / "Scripts" / "python.exe"
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    subprocess.run([str(venv_python), "-m", "pip", "--version"], check=True, env=env)
+"""
 
 
 
@@ -110,14 +137,24 @@ def validate_python_runtime(platform_name: str, bundle: Path) -> None:
     env = os.environ.copy()
     env.pop("PYTHONHOME", None)
     env.pop("PYTHONPATH", None)
+    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     if platform_name.startswith("win"):
+        if sys.platform != "win32":
+            raise SystemExit("Windows bundle Python smoke tests must run on a Windows host")
         env["PYTHONHOME"] = str(python.parent)
     subprocess.run(
-        [str(python), "-c", "import encodings, ensurepip, venv"],
+        [str(python), "-c", PYTHON_RUNTIME_IMPORT_CHECK],
         check=True,
         cwd=bundle,
         env=env,
     )
+    if platform_name.startswith("win"):
+        subprocess.run(
+            [str(python), "-c", WINDOWS_PYTHON_RUNTIME_SMOKE],
+            check=True,
+            cwd=bundle,
+            env=env,
+        )
 
 
 def validate_hermes_resources(resources: Path) -> None:
@@ -181,6 +218,21 @@ def validate_archive_python_stdlib(platform_name: str, archive: Path) -> None:
             f"{archive.name} does not contain Python encodings in "
             f"{lib_encoding} or {nested_zip}"
         )
+
+
+def validate_archive_windows_runtime_hooks(platform_name: str, archive: Path) -> None:
+    if not platform_name.startswith("win"):
+        return
+
+    with zipfile.ZipFile(archive) as zf:
+        names = set(zf.namelist())
+    prefix = f"hermes-offline-installer-{platform_name}/"
+    python_prefix = prefix + "runtime/python/"
+    if not any(name.startswith(python_prefix) and name.endswith("/_ctypes.pyd") for name in names):
+        raise SystemExit(f"{archive.name} does not contain bundled Python _ctypes.pyd")
+    pip_hook = prefix + "scripts/pip_sitecustomize.py"
+    if pip_hook not in names:
+        raise SystemExit(f"{archive.name} does not contain {pip_hook}")
 
 
 def validate_archive_hermes_resources(platform_name: str, archive: Path) -> None:
@@ -259,6 +311,7 @@ def main() -> None:
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)
+    validate_archive_windows_runtime_hooks(args.platform, archive)
     validate_archive_hermes_resources(args.platform, archive)
     print(f"created {archive}")
 

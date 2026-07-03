@@ -675,6 +675,67 @@ function Invoke-NativeCommandCaptured {
   }
 }
 
+function Set-ProcessEnvironmentVariableOrRemove {
+  param(
+    [string] $Name,
+    [AllowNull()] [string] $Value
+  )
+
+  if ($null -eq $Value) {
+    Remove-Item -Path "Env:$Name" -ErrorAction SilentlyContinue
+  } else {
+    Set-Item -Path "Env:$Name" -Value $Value
+  }
+}
+
+function New-HermesPipSiteCustomizeDirectory {
+  $Source = Join-Path $BundleDir "scripts\pip_sitecustomize.py"
+  if (-not (Test-Path $Source)) {
+    throw "Missing pip Windows compatibility hook: $Source"
+  }
+
+  $PatchDir = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-pip-sitecustomize-" + [System.Guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Force -Path $PatchDir | Out-Null
+  Copy-Item -Force $Source (Join-Path $PatchDir "sitecustomize.py")
+  return $PatchDir
+}
+
+function Invoke-HermesPipCommand {
+  param(
+    [string] $PythonBin,
+    [string[]] $Arguments,
+    [string[]] $PythonPathEntries = @()
+  )
+
+  $PatchDir = $null
+  $PreviousPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
+  $PreviousPythonNoUserSite = [Environment]::GetEnvironmentVariable("PYTHONNOUSERSITE", "Process")
+  $PreviousPipConfigFile = [Environment]::GetEnvironmentVariable("PIP_CONFIG_FILE", "Process")
+  $PreviousPipDisableVersionCheck = [Environment]::GetEnvironmentVariable("PIP_DISABLE_PIP_VERSION_CHECK", "Process")
+  try {
+    $PatchDir = New-HermesPipSiteCustomizeDirectory
+    Clear-PythonRuntimeEnvironment
+    $PathEntries = @($PatchDir) + (@($PythonPathEntries) | Where-Object { $_ })
+    $PathSeparator = [System.IO.Path]::PathSeparator.ToString()
+    $env:PYTHONPATH = ($PathEntries -join $PathSeparator)
+    $env:PYTHONNOUSERSITE = "1"
+    $env:PIP_CONFIG_FILE = "nul"
+    $env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
+    return Invoke-NativeCommandCaptured `
+      -FilePath $PythonBin `
+      -Arguments (@("-m", "pip") + $Arguments)
+  } finally {
+    Clear-PythonRuntimeEnvironment
+    Set-ProcessEnvironmentVariableOrRemove -Name "PYTHONPATH" -Value $PreviousPythonPath
+    Set-ProcessEnvironmentVariableOrRemove -Name "PYTHONNOUSERSITE" -Value $PreviousPythonNoUserSite
+    Set-ProcessEnvironmentVariableOrRemove -Name "PIP_CONFIG_FILE" -Value $PreviousPipConfigFile
+    Set-ProcessEnvironmentVariableOrRemove -Name "PIP_DISABLE_PIP_VERSION_CHECK" -Value $PreviousPipDisableVersionCheck
+    if ($PatchDir -and (Test-Path $PatchDir)) {
+      Remove-Item -Recurse -Force $PatchDir -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function Invoke-HermesPipWheelBootstrap {
   param(
     [string] $VenvPython,
@@ -693,32 +754,16 @@ function Invoke-HermesPipWheelBootstrap {
     throw "Bundled pip wheel was not found in $BundledEnsurePipDir"
   }
 
-  $PreviousPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
-  $PreviousPythonNoUserSite = [Environment]::GetEnvironmentVariable("PYTHONNOUSERSITE", "Process")
-  try {
-    Clear-PythonRuntimeEnvironment
-    $env:PYTHONPATH = $PipWheel.FullName
-    $env:PYTHONNOUSERSITE = "1"
-    $Result = Invoke-NativeCommandCaptured `
-      -FilePath $VenvPython `
-      -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $BundledEnsurePipDir, "--upgrade", "--force-reinstall", "pip")
-    if ($Result.ExitCode -ne 0) {
-      $Details = ""
-      if ($Result.Output) {
-        $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
-      }
-      throw "Bundled pip wheel bootstrap failed with exit code $($Result.ExitCode). python: $VenvPython; pip wheel: $($PipWheel.FullName)`n$Details"
+  $Result = Invoke-HermesPipCommand `
+    -PythonBin $VenvPython `
+    -PythonPathEntries @($PipWheel.FullName) `
+    -Arguments @("install", "--no-index", "--find-links", $BundledEnsurePipDir, "--upgrade", "--force-reinstall", "pip")
+  if ($Result.ExitCode -ne 0) {
+    $Details = ""
+    if ($Result.Output) {
+      $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
     }
-  } finally {
-    Clear-PythonRuntimeEnvironment
-    if ($PreviousPythonPath) {
-      $env:PYTHONPATH = $PreviousPythonPath
-    }
-    if ($PreviousPythonNoUserSite) {
-      $env:PYTHONNOUSERSITE = $PreviousPythonNoUserSite
-    } else {
-      Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
-    }
+    throw "Bundled pip wheel bootstrap failed with exit code $($Result.ExitCode). python: $VenvPython; pip wheel: $($PipWheel.FullName)`n$Details"
   }
 }
 
@@ -1381,9 +1426,12 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
 }
-& $VenvPython -m pip --version
-if ($LASTEXITCODE -ne 0) {
-  throw "Python venv pip bootstrap did not complete correctly: $VenvDir"
+$PipVersionResult = Invoke-HermesPipCommand -PythonBin $VenvPython -Arguments @("--version")
+if ($PipVersionResult.Output) {
+  Write-Host (($PipVersionResult.Output | Select-Object -Last 5) -join "`n")
+}
+if ($PipVersionResult.ExitCode -ne 0) {
+  throw "Python venv pip bootstrap did not complete correctly: $VenvDir`n$($PipVersionResult.Output -join "`n")"
 }
 $HermesInstallSpec = "hermes-agent[all]"
 $InstallRequirements = @()
@@ -1407,9 +1455,13 @@ try {
   throw "Could not parse wheelhouse manifest. Error: $($_.Exception.Message)"
 }
 Write-Host "Installing Hermes package spec: $HermesInstallSpec"
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse $HermesInstallSpec @InstallRequirements
-if ($LASTEXITCODE -ne 0) {
-  throw "pip install failed with exit code $LASTEXITCODE."
+$PipInstallArguments = @("install", "--only-binary=:all:", "--no-index", "--find-links", $RuntimeWheelhouse, $HermesInstallSpec) + $InstallRequirements
+$PipInstallResult = Invoke-HermesPipCommand -PythonBin $VenvPython -Arguments $PipInstallArguments
+if ($PipInstallResult.Output) {
+  Write-Host (($PipInstallResult.Output | Select-Object -Last 80) -join "`n")
+}
+if ($PipInstallResult.ExitCode -ne 0) {
+  throw "pip install failed with exit code $($PipInstallResult.ExitCode).`n$($PipInstallResult.Output -join "`n")"
 }
 & $VenvPython -c "import aiohttp, fastapi, multipart, uvicorn, websockets"
 if ($LASTEXITCODE -ne 0) {
