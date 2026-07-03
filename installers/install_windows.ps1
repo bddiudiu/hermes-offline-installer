@@ -923,6 +923,58 @@ function Remove-HermesExeShim {
   }
 }
 
+function Get-HermesCSharpCompiler {
+  $Command = Get-Command csc.exe -ErrorAction SilentlyContinue
+  if ($Command -and $Command.Source) {
+    return $Command.Source
+  }
+
+  $WindowsDir = if ($env:WINDIR) { $env:WINDIR } else { "C:\Windows" }
+  $Candidates = @(
+    (Join-Path $WindowsDir "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
+    (Join-Path $WindowsDir "Microsoft.NET\Framework\v4.0.30319\csc.exe")
+  )
+  foreach ($Candidate in $Candidates) {
+    if (Test-Path $Candidate) {
+      return $Candidate
+    }
+  }
+
+  return $null
+}
+
+function Invoke-HermesCSharpCompiler {
+  param(
+    [string] $Source,
+    [string] $OutputPath
+  )
+
+  $Compiler = Get-HermesCSharpCompiler
+  if (-not $Compiler) {
+    throw "Could not find csc.exe to build Hermes exe shim."
+  }
+
+  $SourcePath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-exe-shim-{0}.cs" -f ([System.Guid]::NewGuid().ToString("N")))
+  try {
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+    [System.IO.File]::WriteAllText($SourcePath, $Source, $Utf8NoBom)
+    $Result = Invoke-NativeCommandCaptured `
+      -FilePath $Compiler `
+      -Arguments @("/nologo", "/target:exe", "/out:$OutputPath", $SourcePath)
+    if ($Result.ExitCode -ne 0) {
+      $Details = ""
+      if ($Result.Output) {
+        $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
+      }
+      throw "csc.exe failed to build Hermes exe shim with exit code $($Result.ExitCode). compiler: $Compiler`n$Details"
+    }
+  } finally {
+    if (Test-Path $SourcePath) {
+      Remove-Item -Force $SourcePath -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function New-HermesExeShimTemplate {
   param(
     [string] $OutputPath
@@ -1027,7 +1079,12 @@ public static class HermesShim
 }
 '@
 
-  Add-Type -TypeDefinition $Source -Language CSharp -OutputType ConsoleApplication -OutputAssembly $OutputPath
+  try {
+    Add-Type -TypeDefinition $Source -Language CSharp -OutputType ConsoleApplication -OutputAssembly $OutputPath -ErrorAction Stop
+  } catch {
+    Write-Warning "Add-Type could not build the Hermes exe shim as a console application. Retrying with csc.exe. Error: $($_.Exception.Message)"
+    Invoke-HermesCSharpCompiler -Source $Source -OutputPath $OutputPath
+  }
 }
 
 function Install-HermesExeShim {
