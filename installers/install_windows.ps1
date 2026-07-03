@@ -481,7 +481,8 @@ function Invoke-HermesVenvAttempt {
   param(
     [string] $PythonBin,
     [string] $VenvDir,
-    [AllowNull()] [string] $PythonHome
+    [AllowNull()] [string] $PythonHome,
+    [AllowNull()] [string] $BundledPythonHome
   )
 
   Clear-PythonRuntimeEnvironment
@@ -503,7 +504,7 @@ function Invoke-HermesVenvAttempt {
 
   $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
   try {
-    Invoke-HermesEnsurePip -VenvPython $VenvPython -PythonHome $PythonHome
+    Invoke-HermesEnsurePip -VenvPython $VenvPython -PythonHome $PythonHome -BundledPythonHome $BundledPythonHome
     return [pscustomobject]@{
       Succeeded = $true
       Stage = "complete"
@@ -532,24 +533,25 @@ function New-HermesVenv {
   param(
     [string] $PythonBin,
     [string] $VenvDir,
-    [AllowNull()] [string] $FallbackPythonHome
+    [AllowNull()] [string] $FallbackPythonHome,
+    [AllowNull()] [string] $BundledPythonHome
   )
 
-  $FirstResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
+  $FirstResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null -BundledPythonHome $BundledPythonHome
   if ($FirstResult.Succeeded) {
     return
   }
 
   Write-Warning "Python venv bootstrap failed using a clean Python environment ($($FirstResult.Summary)). Retrying once after recreating $VenvDir."
   Start-Sleep -Seconds 1
-  $SecondResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null
+  $SecondResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $null -BundledPythonHome $BundledPythonHome
   if ($SecondResult.Succeeded) {
     return
   }
 
   if ($FallbackPythonHome) {
     Write-Warning "Python venv bootstrap failed again ($($SecondResult.Summary)). Retrying with PYTHONHOME=$FallbackPythonHome for this process only."
-    $ThirdResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $FallbackPythonHome
+    $ThirdResult = Invoke-HermesVenvAttempt -PythonBin $PythonBin -VenvDir $VenvDir -PythonHome $FallbackPythonHome -BundledPythonHome $BundledPythonHome
     if ($ThirdResult.Succeeded) {
       return
     }
@@ -595,7 +597,8 @@ function Invoke-NativeCommandCaptured {
 function Invoke-HermesEnsurePip {
   param(
     [string] $VenvPython,
-    [AllowNull()] [string] $PythonHome
+    [AllowNull()] [string] $PythonHome,
+    [AllowNull()] [string] $BundledPythonHome
   )
 
   if (-not (Test-Path $VenvPython)) {
@@ -626,7 +629,54 @@ function Invoke-HermesEnsurePip {
   if ($LastResult -and $LastResult.Output) {
     $Details = (($LastResult.Output | Select-Object -Last 30) -join "`n")
   }
+  if ($BundledPythonHome) {
+    Write-Warning "Python ensurepip failed with exit code $($LastResult.ExitCode). Trying bundled pip wheel bootstrap ..."
+    Invoke-HermesPipWheelBootstrap -VenvPython $VenvPython -BundledPythonHome $BundledPythonHome
+    return
+  }
   throw "Python ensurepip failed after 3 attempts with exit code $($LastResult.ExitCode). python: $VenvPython`n$Details"
+}
+
+function Invoke-HermesPipWheelBootstrap {
+  param(
+    [string] $VenvPython,
+    [string] $BundledPythonHome
+  )
+
+  $BundledEnsurePipDir = Join-Path $BundledPythonHome "Lib\ensurepip\_bundled"
+  if (-not (Test-Path $BundledEnsurePipDir)) {
+    throw "Bundled ensurepip wheels were not found: $BundledEnsurePipDir"
+  }
+
+  $PipWheel = Get-ChildItem -Path $BundledEnsurePipDir -Filter "pip-*.whl" -File -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending |
+    Select-Object -First 1
+  if (-not $PipWheel) {
+    throw "Bundled pip wheel was not found in $BundledEnsurePipDir"
+  }
+
+  $PreviousPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
+  try {
+    Clear-PythonRuntimeEnvironment
+    $env:PYTHONPATH = $PipWheel.FullName
+    $env:PYTHONNOUSERSITE = "1"
+    $Result = Invoke-NativeCommandCaptured `
+      -FilePath $VenvPython `
+      -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $BundledEnsurePipDir, "--upgrade", "--force-reinstall", "pip")
+    if ($Result.ExitCode -ne 0) {
+      $Details = ""
+      if ($Result.Output) {
+        $Details = (($Result.Output | Select-Object -Last 30) -join "`n")
+      }
+      throw "Bundled pip wheel bootstrap failed with exit code $($Result.ExitCode). python: $VenvPython; pip wheel: $($PipWheel.FullName)`n$Details"
+    }
+  } finally {
+    Clear-PythonRuntimeEnvironment
+    Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+    if ($PreviousPythonPath) {
+      $env:PYTHONPATH = $PreviousPythonPath
+    }
+  }
 }
 
 function Test-LocalTcpPort {
@@ -1283,10 +1333,14 @@ if (-not (Test-BundledPythonRuntime -PythonBin $PythonBin -PythonHome $null)) {
 }
 
 $FallbackPythonHome = if ($PythonRuntimeNeedsPythonHome) { $BundledPythonHome } else { $null }
-New-HermesVenv -PythonBin $PythonBin -VenvDir $VenvDir -FallbackPythonHome $FallbackPythonHome
+New-HermesVenv -PythonBin $PythonBin -VenvDir $VenvDir -FallbackPythonHome $FallbackPythonHome -BundledPythonHome $BundledPythonHome
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
+}
+& $VenvPython -m pip --version
+if ($LASTEXITCODE -ne 0) {
+  throw "Python venv pip bootstrap did not complete correctly: $VenvDir"
 }
 $HermesInstallSpec = "hermes-agent[all]"
 $InstallRequirements = @()
