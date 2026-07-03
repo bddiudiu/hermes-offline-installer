@@ -511,28 +511,13 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 VENV_PYTHON="$VENV_DIR/bin/python"
-RUNTIME_PACKAGES=(
-  "aiohttp==3.14.1"
-  "fastapi==0.133.1"
-  "python-multipart"
-  "uvicorn==0.41.0"
-  "websockets"
-)
-HERMES_INSTALL_SPEC="hermes-agent[all]"
-if [ -f "$RUNTIME_WHEELHOUSE/manifest.json" ]; then
-  HERMES_INSTALL_SPEC="$("$PYTHON_BIN" - "$RUNTIME_WHEELHOUSE/manifest.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    data = json.load(fh)
-extras = [item for item in data.get("extras", []) if item]
-print(f"hermes-agent[{','.join(extras)}]" if extras else "hermes-agent")
-PY
-)"
+RUNTIME_REQUIREMENTS="$RUNTIME_WHEELHOUSE/requirements.txt"
+if [ ! -f "$RUNTIME_REQUIREMENTS" ]; then
+  echo "缺少 wheelhouse requirements: $RUNTIME_REQUIREMENTS" >&2
+  exit 1
 fi
-echo "Installing Hermes package spec: $HERMES_INSTALL_SPEC"
-"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" "$HERMES_INSTALL_SPEC" croniter "${RUNTIME_PACKAGES[@]}"
+echo "Installing Hermes requirements: $RUNTIME_REQUIREMENTS"
+"$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" -r "$RUNTIME_REQUIREMENTS"
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2

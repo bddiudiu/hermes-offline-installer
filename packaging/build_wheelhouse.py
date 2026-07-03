@@ -298,12 +298,19 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
 
     hermes_spec = HERMES_SOURCE
+    if " @ " in HERMES_SOURCE:
+        hermes_name = HERMES_SOURCE.split(" @ ", 1)[0].split("[", 1)[0]
+    else:
+        hermes_name = "hermes-agent"
     if args.extras:
         if " @ " in HERMES_SOURCE:
             name, source = HERMES_SOURCE.split(" @ ", 1)
             hermes_spec = f"{name}[{args.extras}] @ {source}"
         else:
             hermes_spec = f"hermes-agent[{args.extras}]"
+        hermes_install_spec = f"{hermes_name}[{args.extras}]"
+    else:
+        hermes_install_spec = hermes_name
 
     work_dir = output.parent / "wheelhouse-build"
     if work_dir.exists():
@@ -313,8 +320,10 @@ def main() -> None:
     export_hermes_resources(hermes_source.source_dir, output)
 
     requirements = output / "requirements.txt"
-    requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
-    requirements.write_text("\n".join(requirement_lines) + "\n", encoding="utf-8")
+    install_requirement_lines = [hermes_install_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
+    download_requirements = work_dir / "requirements-download.txt"
+    download_requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
+    download_requirements.write_text("\n".join(download_requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -330,7 +339,7 @@ def main() -> None:
         "--dest",
         str(output),
         "-r",
-        str(requirements),
+        str(download_requirements),
     ], env=env)
     remove_distribution_artifacts(output, "hermes-agent")
     run([
@@ -344,6 +353,7 @@ def main() -> None:
         hermes_source.spec,
     ], env=env)
     remove_source_archives(output, "hermes-agent")
+    requirements.write_text("\n".join(install_requirement_lines) + "\n", encoding="utf-8")
     validate_required_wheels(output, OFFLINE_REQUIRED_WHEELS)
     validate_hermes_wheel_has_dashboard(output)
     hermes_version = read_distribution_version(output, "hermes-agent")
@@ -354,7 +364,7 @@ def main() -> None:
         extra={
             "kind": "wheelhouse",
             "hermes_version": hermes_version,
-            "hermes_install_spec": hermes_spec,
+            "hermes_install_spec": hermes_install_spec,
             "hermes_resolved_spec": hermes_source.spec,
             "hermes_source_commit": git_commit(hermes_source.source_dir),
             "extras": args.extras.split(",") if args.extras else [],

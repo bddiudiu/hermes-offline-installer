@@ -1640,30 +1640,12 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path (Join-Path $VenvDir "pyvenv.cfg")) -or -not (Test-Path $VenvPython)) {
   throw "Python venv was not created correctly: $VenvDir"
 }
-$RuntimePackages = @(
-  "aiohttp==3.14.1",
-  "fastapi==0.133.1",
-  "python-multipart",
-  "uvicorn==0.41.0",
-  "websockets"
-)
-$HermesInstallSpec = "hermes-agent[all]"
-$WheelhouseManifest = Join-Path $RuntimeWheelhouse "manifest.json"
-if (Test-Path $WheelhouseManifest) {
-  try {
-    $WheelhouseMeta = Get-Content -Raw -Path $WheelhouseManifest -Encoding UTF8 | ConvertFrom-Json
-    $Extras = @($WheelhouseMeta.extras) | Where-Object { $_ }
-    if ($Extras.Count -gt 0) {
-      $HermesInstallSpec = "hermes-agent[$($Extras -join ',')]"
-    } else {
-      $HermesInstallSpec = "hermes-agent"
-    }
-  } catch {
-    Write-Warning "Could not parse wheelhouse manifest. Falling back to $HermesInstallSpec. Error: $($_.Exception.Message)"
-  }
+$RuntimeRequirements = Join-Path $RuntimeWheelhouse "requirements.txt"
+if (-not (Test-Path $RuntimeRequirements)) {
+  throw "Missing wheelhouse requirements: $RuntimeRequirements"
 }
-Write-Host "Installing Hermes package spec: $HermesInstallSpec"
-& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse $HermesInstallSpec croniter @RuntimePackages
+Write-Host "Installing Hermes requirements: $RuntimeRequirements"
+& $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse -r $RuntimeRequirements
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
