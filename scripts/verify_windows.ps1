@@ -34,6 +34,52 @@ function Test-SamePath {
   return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-HermesRuntimeDirectory {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path -or -not (Test-Path $Path)) {
+    return $false
+  }
+
+  foreach ($Marker in @("venv", "bundle-runtime", "hermes-resources", "wheelhouse")) {
+    if (Test-Path (Join-Path $Path $Marker)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Get-NormalizedHermesOfflineHome {
+  param(
+    [AllowNull()] [string] $Value,
+    [string] $LegacyInstallRoot,
+    [string] $DefaultInstallRoot
+  )
+
+  if (-not $Value -or (Test-SamePath -Left $Value -Right $LegacyInstallRoot)) {
+    return $null
+  }
+
+  $Candidate = ConvertTo-ComparablePath -Path $Value
+  $DefaultRuntimeDir = Join-Path $DefaultInstallRoot "runtime"
+  $Leaf = Split-Path -Leaf $Candidate
+  if ($Leaf -and $Leaf.Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase)) {
+    $Parent = Split-Path -Parent $Candidate
+    $ParentShim = if ($Parent) { Join-Path $Parent "bin\hermes.cmd" } else { $null }
+    if (
+      (Test-SamePath -Left $Candidate -Right $DefaultRuntimeDir) -or
+      (Test-HermesRuntimeDirectory -Path $Candidate) -or
+      ($ParentShim -and (Test-Path $ParentShim))
+    ) {
+      return $Parent
+    }
+  }
+
+  return $Candidate
+}
+
 function Get-WindowsDefaultHermesHome {
   $ProgramDataRoot = if ($env:ProgramData) { $env:ProgramData } else { "C:\ProgramData" }
   return (Join-Path $ProgramDataRoot "SSC\Hermes")
@@ -49,11 +95,7 @@ $LocalPortableHome = Join-Path $BundleDirPath ".hermes"
 $LegacyInstallRoot = Join-Path $env:USERPROFILE ".hermes-offline"
 $LegacyHermesHome = Join-Path $env:USERPROFILE ".hermes"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
-$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
-  $env:HERMES_OFFLINE_HOME
-} else {
-  $null
-}
+$CustomInstallRoot = Get-NormalizedHermesOfflineHome -Value $env:HERMES_OFFLINE_HOME -LegacyInstallRoot $LegacyInstallRoot -DefaultInstallRoot (Get-WindowsDefaultHermesOfflineHome)
 $CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
   $env:HERMES_HOME
 } else {

@@ -53,6 +53,54 @@ function Test-SamePath {
   return $LeftPath.Equals($RightPath, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-HermesRuntimeDirectory {
+  param(
+    [AllowNull()] [string] $Path
+  )
+
+  if (-not $Path -or -not (Test-Path $Path)) {
+    return $false
+  }
+
+  foreach ($Marker in @("venv", "bundle-runtime", "hermes-resources", "wheelhouse")) {
+    if (Test-Path (Join-Path $Path $Marker)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Get-NormalizedHermesOfflineHome {
+  param(
+    [AllowNull()] [string] $Value,
+    [string] $LegacyInstallRoot,
+    [string] $DefaultInstallRoot
+  )
+
+  if (-not $Value -or (Test-SamePath -Left $Value -Right $LegacyInstallRoot)) {
+    return $null
+  }
+
+  $Candidate = ConvertTo-ComparablePath -Path $Value
+  $DefaultRuntimeDir = Join-Path $DefaultInstallRoot "runtime"
+  $Leaf = Split-Path -Leaf $Candidate
+  if ($Leaf -and $Leaf.Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase)) {
+    $Parent = Split-Path -Parent $Candidate
+    $ParentShim = if ($Parent) { Join-Path $Parent "bin\hermes.cmd" } else { $null }
+    if (
+      (Test-SamePath -Left $Candidate -Right $DefaultRuntimeDir) -or
+      (Test-HermesRuntimeDirectory -Path $Candidate) -or
+      ($ParentShim -and (Test-Path $ParentShim))
+    ) {
+      Write-Host "Detected HERMES_OFFLINE_HOME points at a Hermes runtime directory: $Candidate"
+      Write-Host "Using Hermes install root instead: $Parent"
+      return $Parent
+    }
+  }
+
+  return $Candidate
+}
+
 function Test-PathUnderRoot {
   param(
     [AllowNull()] [string] $Path,
@@ -270,11 +318,7 @@ if ($TargetUserSid -ne $CurrentUserSid) {
 $LegacyHermesHome = Join-Path $TargetUserProfile ".hermes"
 $LegacyInstallRoot = Join-Path $TargetUserProfile ".hermes-offline"
 $LegacyOfflineBinDir = Join-Path $LegacyInstallRoot "bin"
-$CustomInstallRoot = if ($env:HERMES_OFFLINE_HOME -and -not (Test-SamePath -Left $env:HERMES_OFFLINE_HOME -Right $LegacyInstallRoot)) {
-  $env:HERMES_OFFLINE_HOME
-} else {
-  $null
-}
+$CustomInstallRoot = Get-NormalizedHermesOfflineHome -Value $env:HERMES_OFFLINE_HOME -LegacyInstallRoot $LegacyInstallRoot -DefaultInstallRoot $DefaultInstallRoot
 $CustomHermesHome = if ($env:HERMES_HOME -and -not (Test-SamePath -Left $env:HERMES_HOME -Right $LegacyHermesHome)) {
   $env:HERMES_HOME
 } else {
@@ -490,42 +534,78 @@ function Invoke-HermesVenvAttempt {
     $env:PYTHONHOME = $PythonHome
   }
   Remove-InstallPath -Path $VenvDir
-  & $PythonBin -m venv --without-pip $VenvDir
-  $VenvExitCode = $LASTEXITCODE
+  $VenvResult = Invoke-NativeCommandCaptured `
+    -FilePath $PythonBin `
+    -Arguments @("-m", "venv", $VenvDir)
+  $VenvExitCode = $VenvResult.ExitCode
   Clear-PythonRuntimeEnvironment
-  if ($VenvExitCode -ne 0) {
-    return [pscustomobject]@{
-      Succeeded = $false
-      Stage = "venv"
-      Summary = "venv exit code $VenvExitCode"
-      Details = ""
-    }
-  }
-
-  $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-  try {
-    Invoke-HermesEnsurePip -VenvPython $VenvPython -PythonHome $PythonHome -BundledPythonHome $BundledPythonHome
+  if ($VenvExitCode -eq 0) {
     return [pscustomobject]@{
       Succeeded = $true
       Stage = "complete"
       Summary = "ok"
       Details = ""
     }
-  } catch {
-    $Message = $_.Exception.Message
-    $FirstLine = $Message
-    $LineBreakIndex = $FirstLine.IndexOf("`n")
-    if ($LineBreakIndex -ge 0) {
-      $FirstLine = $FirstLine.Substring(0, $LineBreakIndex).TrimEnd("`r")
-    }
-    return [pscustomobject]@{
-      Succeeded = $false
-      Stage = "ensurepip"
-      Summary = "ensurepip failed: $FirstLine"
-      Details = $Message
-    }
-  } finally {
+  }
+
+  $VenvDetails = ""
+  if ($VenvResult.Output) {
+    $VenvDetails = (($VenvResult.Output | Select-Object -Last 30) -join "`n")
+  }
+  if ($BundledPythonHome) {
+    Write-Warning "Python venv creation with bundled pip failed with exit code $VenvExitCode. Retrying with --without-pip and bundled pip wheel ..."
     Clear-PythonRuntimeEnvironment
+    if ($PythonHome) {
+      $env:PYTHONHOME = $PythonHome
+    }
+    Remove-InstallPath -Path $VenvDir
+    $VenvWithoutPipResult = Invoke-NativeCommandCaptured `
+      -FilePath $PythonBin `
+      -Arguments @("-m", "venv", "--without-pip", $VenvDir)
+    Clear-PythonRuntimeEnvironment
+    if ($VenvWithoutPipResult.ExitCode -ne 0) {
+      $WithoutPipDetails = ""
+      if ($VenvWithoutPipResult.Output) {
+        $WithoutPipDetails = (($VenvWithoutPipResult.Output | Select-Object -Last 30) -join "`n")
+      }
+      return [pscustomobject]@{
+        Succeeded = $false
+        Stage = "venv"
+        Summary = "venv exit code $VenvExitCode; without-pip exit code $($VenvWithoutPipResult.ExitCode)"
+        Details = "$VenvDetails`n$WithoutPipDetails"
+      }
+    }
+
+    $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+    try {
+      Invoke-HermesPipWheelBootstrap -VenvPython $VenvPython -BundledPythonHome $BundledPythonHome
+      return [pscustomobject]@{
+        Succeeded = $true
+        Stage = "complete"
+        Summary = "ok"
+        Details = ""
+      }
+    } catch {
+      $Message = $_.Exception.Message
+      $FirstLine = $Message
+      $LineBreakIndex = $FirstLine.IndexOf("`n")
+      if ($LineBreakIndex -ge 0) {
+        $FirstLine = $FirstLine.Substring(0, $LineBreakIndex).TrimEnd("`r")
+      }
+      return [pscustomobject]@{
+        Succeeded = $false
+        Stage = "pip"
+        Summary = "pip bootstrap failed: $FirstLine"
+        Details = $Message
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    Succeeded = $false
+    Stage = "venv"
+    Summary = "venv exit code $VenvExitCode"
+    Details = $VenvDetails
   }
 }
 
@@ -555,10 +635,14 @@ function New-HermesVenv {
     if ($ThirdResult.Succeeded) {
       return
     }
-    throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); PYTHONHOME retry: $($ThirdResult.Summary); python: $PythonBin; target: $VenvDir"
+    $FailureDetails = @($FirstResult.Details, $SecondResult.Details, $ThirdResult.Details) | Where-Object { $_ }
+    $DetailsText = if ($FailureDetails.Count -gt 0) { "`n" + ($FailureDetails -join "`n") } else { "" }
+    throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); PYTHONHOME retry: $($ThirdResult.Summary); python: $PythonBin; target: $VenvDir$DetailsText"
   }
 
-  throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); python: $PythonBin; target: $VenvDir"
+  $FailureDetails = @($FirstResult.Details, $SecondResult.Details) | Where-Object { $_ }
+  $DetailsText = if ($FailureDetails.Count -gt 0) { "`n" + ($FailureDetails -join "`n") } else { "" }
+  throw "Python venv creation failed. clean attempts: $($FirstResult.Summary); $($SecondResult.Summary); python: $PythonBin; target: $VenvDir$DetailsText"
 }
 
 function Invoke-NativeCommandCaptured {
@@ -567,74 +651,28 @@ function Invoke-NativeCommandCaptured {
     [string[]] $Arguments
   )
 
-  $StdoutPath = [System.IO.Path]::GetTempFileName()
-  $StderrPath = [System.IO.Path]::GetTempFileName()
+  $Output = @()
+  $ExitCode = 1
+  $PreviousErrorActionPreference = $ErrorActionPreference
   try {
-    $Process = Start-Process `
-      -FilePath $FilePath `
-      -ArgumentList $Arguments `
-      -NoNewWindow `
-      -Wait `
-      -PassThru `
-      -RedirectStandardOutput $StdoutPath `
-      -RedirectStandardError $StderrPath
-    $Output = @()
-    if (Test-Path $StdoutPath) {
-      $Output += @(Get-Content -Path $StdoutPath -ErrorAction SilentlyContinue)
-    }
-    if (Test-Path $StderrPath) {
-      $Output += @(Get-Content -Path $StderrPath -ErrorAction SilentlyContinue)
-    }
-    return [pscustomobject]@{
-      ExitCode = $Process.ExitCode
-      Output = $Output
+    $ErrorActionPreference = "Continue"
+    $Output = @(& $FilePath @Arguments 2>&1)
+    $ExitCode = $LASTEXITCODE
+  } catch {
+    $Output += $_.Exception.Message
+    if ($LASTEXITCODE -is [int]) {
+      $ExitCode = $LASTEXITCODE
     }
   } finally {
-    Remove-Item -Force $StdoutPath, $StderrPath -ErrorAction SilentlyContinue
+    $ErrorActionPreference = $PreviousErrorActionPreference
   }
-}
-
-function Invoke-HermesEnsurePip {
-  param(
-    [string] $VenvPython,
-    [AllowNull()] [string] $PythonHome,
-    [AllowNull()] [string] $BundledPythonHome
-  )
-
-  if (-not (Test-Path $VenvPython)) {
-    throw "Python venv executable was not created: $VenvPython"
+  if ($null -eq $ExitCode) {
+    $ExitCode = 0
   }
-
-  $LastResult = $null
-  for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
-    Clear-PythonRuntimeEnvironment
-    if ($PythonHome) {
-      $env:PYTHONHOME = $PythonHome
-    }
-    $LastResult = Invoke-NativeCommandCaptured `
-      -FilePath $VenvPython `
-      -Arguments @("-m", "ensurepip", "--upgrade", "--default-pip")
-    Clear-PythonRuntimeEnvironment
-    if ($LastResult.ExitCode -eq 0) {
-      return
-    }
-    if ($Attempt -lt 3) {
-      $NextAttempt = $Attempt + 1
-      Write-Warning "Python ensurepip failed with exit code $($LastResult.ExitCode). Retrying attempt $NextAttempt of 3 ..."
-      Start-Sleep -Seconds $Attempt
-    }
+  return [pscustomobject]@{
+    ExitCode = $ExitCode
+    Output = $Output
   }
-
-  $Details = ""
-  if ($LastResult -and $LastResult.Output) {
-    $Details = (($LastResult.Output | Select-Object -Last 30) -join "`n")
-  }
-  if ($BundledPythonHome) {
-    Write-Warning "Python ensurepip failed with exit code $($LastResult.ExitCode). Trying bundled pip wheel bootstrap ..."
-    Invoke-HermesPipWheelBootstrap -VenvPython $VenvPython -BundledPythonHome $BundledPythonHome
-    return
-  }
-  throw "Python ensurepip failed after 3 attempts with exit code $($LastResult.ExitCode). python: $VenvPython`n$Details"
 }
 
 function Invoke-HermesPipWheelBootstrap {
@@ -656,6 +694,7 @@ function Invoke-HermesPipWheelBootstrap {
   }
 
   $PreviousPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
+  $PreviousPythonNoUserSite = [Environment]::GetEnvironmentVariable("PYTHONNOUSERSITE", "Process")
   try {
     Clear-PythonRuntimeEnvironment
     $env:PYTHONPATH = $PipWheel.FullName
@@ -672,9 +711,13 @@ function Invoke-HermesPipWheelBootstrap {
     }
   } finally {
     Clear-PythonRuntimeEnvironment
-    Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     if ($PreviousPythonPath) {
       $env:PYTHONPATH = $PreviousPythonPath
+    }
+    if ($PreviousPythonNoUserSite) {
+      $env:PYTHONNOUSERSITE = $PreviousPythonNoUserSite
+    } else {
+      Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     }
   }
 }

@@ -65,7 +65,7 @@ Windows 默认安装会使用固定产品目录：Hermes 配置、skills、日�
 
 ```powershell
 $env:HERMES_HOME="D:\Hermes\home"
-$env:HERMES_OFFLINE_HOME="D:\Hermes\runtime"
+$env:HERMES_OFFLINE_HOME="D:\Hermes\offline"
 .\installers\install_windows.ps1
 ```
 
@@ -90,7 +90,7 @@ Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 
 | `PYTHONUTF8` | `1`（Windows 用户环境变量和 shim） |
 | `PYTHONIOENCODING` | `utf-8`（Windows 用户环境变量和 shim） |
 
-其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当检测到旧版本写入的 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline` 默认变量时，安装器会把它们视为 legacy 默认值并改用新的产品目录，同时清理旧 `%USERPROFILE%\.hermes-offline\bin` 的 PATH 入口。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
+其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。`HERMES_OFFLINE_HOME` 是包含 `runtime` 和 `bin` 的离线安装根目录，不应直接指向内层 `runtime` 目录。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当检测到旧版本写入的 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline` 默认变量时，安装器会把它们视为 legacy 默认值并改用新的产品目录，同时清理旧 `%USERPROFILE%\.hermes-offline\bin` 的 PATH 入口。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
 
 如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，保留已有 `.env`，并只对 `config.yaml` 中的默认模型渠道和 `zhan_ai` provider 做最小修正。从旧版默认目录 `%USERPROFILE%\.hermes` 迁移到 `C:\ProgramData\SSC\Hermes` 时，如果新目录缺少 `config.yaml` 或 `.env`，会先从旧目录复制。
 
@@ -246,7 +246,7 @@ wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`
 
 ## 安装位置
 
-- Runtime：Windows 默认为 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes\runtime`，Unix 默认为 `~/.hermes-offline/runtime`，可通过 `HERMES_OFFLINE_HOME` 覆盖。
+- 离线安装根目录：Windows 默认为 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes`，Unix 默认为 `~/.hermes-offline`，可通过 `HERMES_OFFLINE_HOME` 覆盖；runtime 本身位于该根目录下的 `runtime` 子目录。
 - Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins`、`web_dist` 和 `tui_dist`。
 - Shim：Unix 为 `~/.local/bin/hermes`；Windows 为 `%HERMES_OFFLINE_HOME%\bin\hermes.cmd`。
 - 便携模式：Windows 为 `<解压目录>\.hermes-offline\bin\hermes.cmd`，Unix 为 `<解压目录>/.hermes-offline/bin/hermes`。
