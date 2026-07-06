@@ -104,6 +104,91 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
+如果你的上层安装器需要全程静默安装且不弹出命令行窗口，请调用新增的 `install_silent.vbs`。它会在后台启动 `install_windows_silent.ps1`，默认跳过 Dashboard 自动启动，并把最终结果写入状态文件：
+
+```cmd
+wscript.exe install_silent.vbs -StatusFile "C:\Temp\hermes-install-status.json" -LogFile "C:\Temp\hermes-install.log"
+```
+
+静默安装不会自行弹出 UAC；如果使用默认 `Program Files` 安装目录，调用方需要预先以管理员权限运行。`install_silent.vbs` 会等待安装结束，并把退出码透传给调用方；同时状态文件会输出如下 JSON 字段，便于安装器轮询：
+
+- `state`: `running` / `succeeded` / `failed`
+- `ok`: `true` / `false`
+- `exit_code`: 进程退出码，安装进行中固定为 `259`
+- `message`: 简短结果说明
+- `log_file`: 日志文件路径
+
+轮询时只要等待 `state` 不再是 `running` 即可判定安装完成。
+
+C# 调用示例：
+
+```csharp
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+
+var bundleDir = @"C:\path\to\hermes-offline-installer-win-x64";
+var statusFile = Path.Combine(Path.GetTempPath(), "hermes-install-status.json");
+var logFile = Path.Combine(Path.GetTempPath(), "hermes-install.log");
+
+if (File.Exists(statusFile)) File.Delete(statusFile);
+if (File.Exists(logFile)) File.Delete(logFile);
+
+var process = Process.Start(new ProcessStartInfo
+{
+    FileName = "wscript.exe",
+    Arguments =
+        $"\"{Path.Combine(bundleDir, "install_silent.vbs")}\" " +
+        $"-StatusFile \"{statusFile}\" " +
+        $"-LogFile \"{logFile}\"",
+    UseShellExecute = false,
+    CreateNoWindow = true,
+    WorkingDirectory = bundleDir
+}) ?? throw new InvalidOperationException("Failed to start silent installer.");
+
+while (true)
+{
+    if (File.Exists(statusFile))
+    {
+        using var stream = File.Open(statusFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var document = JsonDocument.Parse(stream);
+        var root = document.RootElement;
+        var state = root.GetProperty("state").GetString();
+
+        if (!string.Equals(state, "running", StringComparison.OrdinalIgnoreCase))
+        {
+            var ok = root.TryGetProperty("ok", out var okProp) && okProp.GetBoolean();
+            var exitCode = root.TryGetProperty("exit_code", out var exitProp) ? exitProp.GetInt32() : -1;
+            var message = root.TryGetProperty("message", out var msgProp) ? msgProp.GetString() : "";
+
+            if (!ok)
+            {
+                throw new InvalidOperationException(
+                    $"Hermes silent install failed. exitCode={exitCode}, message={message}, log={logFile}");
+            }
+
+            break;
+        }
+    }
+
+    if (process.HasExited)
+    {
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Hermes silent installer exited early. exitCode={process.ExitCode}, log={logFile}");
+        }
+    }
+
+    Thread.Sleep(1000);
+}
+
+process.WaitForExit();
+Console.WriteLine("Hermes silent install succeeded.");
+```
+
 如需安装完成后跳过 Dashboard 启动：
 
 ```cmd
@@ -286,7 +371,7 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 
 ## 配置
 
-安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`。如果安装或升级时已经能拿到 `ZHANCLAW_BASE_URL` 和 `ZHANCLAW_API_KEY`，安装器还会额外请求一次 `/models`，把返回的模型 id 预写到 `providers.zhan_ai.models`；如果拿不到或实时模型发现不可用，`qwen3` 会作为兜底模型显示。模型服务配置从 Windows 用户环境变量读取：
+安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`；当实时模型发现不可用时，`qwen3` 会作为兜底模型显示。模型服务配置从 Windows 用户环境变量读取：
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")

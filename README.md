@@ -104,6 +104,91 @@ set HERMES_NO_PAUSE=1
 install_windows.cmd
 ```
 
+If your outer installer needs a fully silent Windows install with no visible console window, call the new `install_silent.vbs` entrypoint. It launches `install_windows_silent.ps1` in the background, skips Dashboard auto-start by default, and writes the final result to a status file:
+
+```cmd
+wscript.exe install_silent.vbs -StatusFile "C:\Temp\hermes-install-status.json" -LogFile "C:\Temp\hermes-install.log"
+```
+
+Silent install does not self-elevate. When using the default `Program Files` install root, the caller must already be running with administrator rights. `install_silent.vbs` waits for completion and returns the installer exit code to the caller. The status file is JSON and includes:
+
+- `state`: `running` / `succeeded` / `failed`
+- `ok`: `true` / `false`
+- `exit_code`: process exit code, fixed to `259` while still running
+- `message`: short result summary
+- `log_file`: log path for diagnostics
+
+Polling until `state` changes from `running` is enough for external listeners.
+
+C# example:
+
+```csharp
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+
+var bundleDir = @"C:\path\to\hermes-offline-installer-win-x64";
+var statusFile = Path.Combine(Path.GetTempPath(), "hermes-install-status.json");
+var logFile = Path.Combine(Path.GetTempPath(), "hermes-install.log");
+
+if (File.Exists(statusFile)) File.Delete(statusFile);
+if (File.Exists(logFile)) File.Delete(logFile);
+
+var process = Process.Start(new ProcessStartInfo
+{
+    FileName = "wscript.exe",
+    Arguments =
+        $"\"{Path.Combine(bundleDir, "install_silent.vbs")}\" " +
+        $"-StatusFile \"{statusFile}\" " +
+        $"-LogFile \"{logFile}\"",
+    UseShellExecute = false,
+    CreateNoWindow = true,
+    WorkingDirectory = bundleDir
+}) ?? throw new InvalidOperationException("Failed to start silent installer.");
+
+while (true)
+{
+    if (File.Exists(statusFile))
+    {
+        using var stream = File.Open(statusFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var document = JsonDocument.Parse(stream);
+        var root = document.RootElement;
+        var state = root.GetProperty("state").GetString();
+
+        if (!string.Equals(state, "running", StringComparison.OrdinalIgnoreCase))
+        {
+            var ok = root.TryGetProperty("ok", out var okProp) && okProp.GetBoolean();
+            var exitCode = root.TryGetProperty("exit_code", out var exitProp) ? exitProp.GetInt32() : -1;
+            var message = root.TryGetProperty("message", out var msgProp) ? msgProp.GetString() : "";
+
+            if (!ok)
+            {
+                throw new InvalidOperationException(
+                    $"Hermes silent install failed. exitCode={exitCode}, message={message}, log={logFile}");
+            }
+
+            break;
+        }
+    }
+
+    if (process.HasExited)
+    {
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Hermes silent installer exited early. exitCode={process.ExitCode}, log={logFile}");
+        }
+    }
+
+    Thread.Sleep(1000);
+}
+
+process.WaitForExit();
+Console.WriteLine("Hermes silent install succeeded.");
+```
+
 To skip Dashboard startup after install:
 
 ```cmd
@@ -286,7 +371,7 @@ Then reopen PowerShell or CMD.
 
 ## Configuration
 
-The installer configures the default model as `qwen3` through the `zhan_ai` provider. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai`, corrects the previous generated `gpt-4o-mini` default to `qwen3`, and keeps `providers.zhan_ai` present. When `ZHANCLAW_BASE_URL` and `ZHANCLAW_API_KEY` are already available during install or upgrade, the installer also fetches `/models` once and prewrites the returned model ids into `providers.zhan_ai.models`; otherwise `qwen3` remains as the fallback model when live discovery is unavailable. Model service settings are read from Windows user environment variables:
+The installer configures the default model as `qwen3` through the `zhan_ai` provider. If `config.yaml` already exists, the installer leaves unrelated settings intact but ensures `model.provider` is `custom:zhan_ai`, corrects the previous generated `gpt-4o-mini` default to `qwen3`, and keeps `providers.zhan_ai` present with `qwen3` as the fallback model when live discovery is unavailable. Model service settings are read from Windows user environment variables:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")
