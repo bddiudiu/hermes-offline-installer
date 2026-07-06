@@ -18,7 +18,7 @@
 | 9 | 改用户 PATH 时把 `REG_EXPAND_SZ` 固化成展开后的字符串 | 🟡 中 | `install_windows.ps1`、`uninstall_windows.ps1` | ✅ 已修复（3de0286 / v0.18.0-61） |
 | 10 | shim 每次启动无条件覆盖 `ZHANCLAW_*` 会话变量；卸载误删用户自设的 `PYTHONUTF8` | 🟡 中 | shim 模板、`uninstall_windows.ps1:318` | ⬜ |
 | 11 | 运行时依赖清单在 3 处重复（打包脚本 + 两个安装器） | 🟢 低 | `build_wheelhouse.py:20`、`install_unix.sh`、`install_windows.ps1` | ✅ 已修复（工作区） |
-| 12 | config.yaml 迁移逻辑用 Python 和 PowerShell 各写一遍（约 700 行），易漂移 | 🟢 低 | 两个安装器 | ⬜ |
+| 12 | config.yaml 迁移逻辑用 Python 和 PowerShell 各写一遍（约 700 行），易漂移 | 🟢 低 | 两个安装器 | ✅ 已修复（工作区） |
 | 13 | Unix 安装器缺少 Windows 版已有的能力（停进程、legacy 迁移、venv 重试等） | 🟢 低 | `install_unix.sh` | 🟨 部分修复（3de0286 / v0.18.0-61） |
 | 14 | CI 只做语法检查，没有任何真实执行的测试 | 🟢 低 | `.github/workflows/validate.yml` | ⬜ |
 | 15 | release 只构建 win-x64（README 承诺 4 平台）；`.gitignore` 缺 `.idea/` | 🟢 低 | `release.yml`、`.gitignore` | 🟨 部分修复（`.idea/` 已在工作区补充） |
@@ -119,10 +119,9 @@ wheelhouse 解析的 `hermes-agent[extras]`、`croniter`、`setuptools` 和运�
 
 ### 12. 配置迁移逻辑双实现
 
-**建议**：把 `install_unix.sh` 内嵌的 Python 迁移脚本抽成独立文件（如
-`scripts/configure_config.py`）随包分发；两个安装器都在 venv 建好后用捆绑 Python 调它。
-可删除 PowerShell 侧约 400 行 `Ensure-*`/`Remove-LegacyApiServerPort` 等函数，消除漂移。
-建议在下一次涉及配置迁移的功能改动前先做这项。
+**修复（工作区）**：配置迁移逻辑已抽成 `scripts/configure_config.py` 并随 bundle 分发。
+Unix 安装器和 Windows 安装器都使用捆绑 Python 调用同一个脚本；Windows 侧删除了原有
+PowerShell YAML 迁移函数，Unix 侧删除了内嵌 Python 片段。
 
 ### 13. Unix 安装器功能缺口
 
