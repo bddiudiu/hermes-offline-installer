@@ -1401,15 +1401,6 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $Legacy
 if (-not (Test-Path $ConfigPath)) {
   Copy-Item (Join-Path $RuntimeTemplates "config.yaml") $ConfigPath
 }
-$ConfigureConfigScript = Join-Path $BundleDir "scripts\configure_config.py"
-if (-not (Test-Path $ConfigureConfigScript)) {
-  throw "Missing config migration script: $ConfigureConfigScript"
-}
-& $PythonBin $ConfigureConfigScript $ConfigPath
-if ($LASTEXITCODE -ne 0) {
-  throw "Config migration failed with exit code $LASTEXITCODE."
-}
-
 $EnvPath = Join-Path $HermesHome ".env"
 $LegacyEnvPath = Join-Path $LegacyHermesHome ".env"
 if (-not $PortableMode -and -not (Test-SamePath -Left $HermesHome -Right $LegacyHermesHome)) {
@@ -1424,6 +1415,21 @@ if (-not $PortableMode -and -not (Test-SamePath -Left $EnvPath -Right $LegacyEnv
   $ZhanEnvImportPaths += $LegacyEnvPath
 }
 Import-ZhanClawEnvironmentFromLegacyDotEnv -EnvPaths $ZhanEnvImportPaths -PortableMode $PortableMode
+
+$ConfigureConfigScript = Join-Path $BundleDir "scripts\configure_config.py"
+if (-not (Test-Path $ConfigureConfigScript)) {
+  throw "Missing config migration script: $ConfigureConfigScript"
+}
+$ConfigureConfigArgs = @($ConfigureConfigScript, $ConfigPath)
+foreach ($CandidateEnvPath in @($EnvPath, $LegacyEnvPath)) {
+  if ($CandidateEnvPath) {
+    $ConfigureConfigArgs += @("--env-path", $CandidateEnvPath)
+  }
+}
+& $PythonBin @ConfigureConfigArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "Config migration failed with exit code $LASTEXITCODE."
+}
 
 Sync-BundledSkills -VenvPython $VenvPython -HermesHome $HermesHome -InstallRoot $InstallRoot -ResourcesDir $RuntimeResources
 

@@ -280,12 +280,11 @@ chmod +x "$BIN_DIR/hermes"
 if [ ! -f "$HERMES_HOME/config.yaml" ]; then
   cp "$RUNTIME_TEMPLATES/config.yaml" "$HERMES_HOME/config.yaml"
 fi
-"$PYTHON_BIN" "$BUNDLE_DIR/scripts/configure_config.py" "$HERMES_HOME/config.yaml"
-
 if [ ! -f "$HERMES_HOME/.env" ]; then
   cp "$RUNTIME_TEMPLATES/env.template" "$HERMES_HOME/.env"
 fi
 ensure_api_server_key "$HERMES_HOME/.env"
+"$PYTHON_BIN" "$BUNDLE_DIR/scripts/configure_config.py" "$HERMES_HOME/config.yaml" --env-path "$HERMES_HOME/.env"
 
 sync_bundled_skills
 "$BIN_DIR/hermes" version

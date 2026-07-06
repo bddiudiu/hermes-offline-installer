@@ -286,7 +286,7 @@ foreach ($Entry in $HermesEnv.GetEnumerator()) {
 
 ## 配置
 
-安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`；当实时模型发现不可用时，`qwen3` 会作为兜底模型显示。模型服务配置从 Windows 用户环境变量读取：
+安装器会把默认模型配置为 `zhan_ai` 渠道下的 `qwen3`。如果 `config.yaml` 已存在，安装器不会覆盖其他无关配置项，但会确保 `model.provider` 为 `custom:zhan_ai`，把旧安装器生成的 `gpt-4o-mini` 默认值修正为 `qwen3`，并补齐 `providers.zhan_ai`。如果安装或升级时已经能拿到 `ZHANCLAW_BASE_URL` 和 `ZHANCLAW_API_KEY`，安装器还会额外请求一次 `/models`，把返回的模型 id 预写到 `providers.zhan_ai.models`；如果拿不到或实时模型发现不可用，`qwen3` 会作为兜底模型显示。模型服务配置从 Windows 用户环境变量读取：
 
 ```powershell
 [Environment]::SetEnvironmentVariable("ZHANCLAW_BASE_URL", "https://your-zhanclaw-endpoint/v1", "User")

@@ -2,12 +2,139 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 import re
+import sys
+from typing import Iterable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
-def configure_config(path: Path) -> str:
+DEFAULT_ZHAN_AI_MODEL = "qwen3"
+ZHANCLAW_BASE_URL_NAMES = (
+    "ZHANCLAW_BASE_URL",
+    "CUSTOM_BASE_URL",
+    "OPENAI_BASE_URL",
+)
+ZHANCLAW_API_KEY_NAMES = (
+    "ZHANCLAW_API_KEY",
+    "CUSTOM_API_KEY",
+    "OPENAI_API_KEY",
+)
+
+
+def _dedupe_model_ids(model_ids: Iterable[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for model_id in model_ids:
+        candidate = str(model_id or "").strip()
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        ordered.append(candidate)
+
+    default_index = next(
+        (index for index, item in enumerate(ordered) if item.lower() == DEFAULT_ZHAN_AI_MODEL),
+        None,
+    )
+    if default_index not in (None, 0):
+        ordered.insert(0, ordered.pop(default_index))
+    return ordered
+
+
+def _get_env_file_value(path: Path, names: Iterable[str]) -> str | None:
+    if not path.exists():
+        return None
+
+    name_set = {name.upper() for name in names if name}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\s*([^#=\s]+)\s*=\s*(.*)$", line)
+        if not match:
+            continue
+        key = match.group(1).strip().upper()
+        if key not in name_set:
+            continue
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if value:
+            return value
+    return None
+
+
+def _resolve_setting(names: Iterable[str], env_paths: Iterable[Path]) -> str | None:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    for env_path in env_paths:
+        value = _get_env_file_value(env_path, names)
+        if value:
+            return value
+    return None
+
+
+def _extract_model_ids(payload: object) -> list[str]:
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if data is not None:
+            return _extract_model_ids(data)
+        models = payload.get("models")
+        if models is not None:
+            return _extract_model_ids(models)
+        model_id = payload.get("id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            model_id = payload.get("name")
+        if isinstance(model_id, str) and model_id.strip():
+            return [model_id.strip()]
+        return []
+
+    if isinstance(payload, list):
+        model_ids: list[str] = []
+        for item in payload:
+            model_ids.extend(_extract_model_ids(item))
+        return _dedupe_model_ids(model_ids)
+
+    if isinstance(payload, str) and payload.strip():
+        return [payload.strip()]
+
+    return []
+
+
+def discover_zhan_ai_models(env_paths: Iterable[Path]) -> list[str] | None:
+    base_url = _resolve_setting(ZHANCLAW_BASE_URL_NAMES, env_paths)
+    api_key = _resolve_setting(ZHANCLAW_API_KEY_NAMES, env_paths)
+    if not base_url or not api_key:
+        return None
+
+    request = Request(
+        base_url.rstrip("/") + "/models",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "X-API-Key": api_key,
+            "User-Agent": "hermes-offline-installer/1.0",
+        },
+    )
+    try:
+        with urlopen(request, timeout=3.0) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"Warning: could not fetch zhan_ai models; using fallback list. {exc}", file=sys.stderr)
+        return None
+
+    model_ids = _dedupe_model_ids([DEFAULT_ZHAN_AI_MODEL, *_extract_model_ids(payload)])
+    return model_ids or [DEFAULT_ZHAN_AI_MODEL]
+
+
+def configure_config(path: Path, env_paths: Iterable[Path] = ()) -> str:
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    discovered_models = discover_zhan_ai_models(env_paths)
 
     def find_top_level_key(key: str) -> int:
         pattern = re.compile(rf"^{re.escape(key)}:\s*(#.*)?$")
@@ -33,10 +160,14 @@ def configure_config(path: Path) -> str:
                 return index
         return len(lines)
 
+    def zhan_ai_model_lines(model_ids: list[str]) -> list[str]:
+        ordered_models = _dedupe_model_ids(model_ids or [DEFAULT_ZHAN_AI_MODEL])
+        return ["    models:", *[f"      - {model_id}" for model_id in ordered_models]]
+
     def ensure_model_provider() -> None:
         model_index = find_top_level_key("model")
         if model_index < 0:
-            lines[0:0] = ["model:", "  default: qwen3", "  provider: custom:zhan_ai", ""]
+            lines[0:0] = ["model:", f"  default: {DEFAULT_ZHAN_AI_MODEL}", "  provider: custom:zhan_ai", ""]
             return
 
         model_end = top_level_block_end(model_index)
@@ -49,14 +180,14 @@ def configure_config(path: Path) -> str:
                 provider_index = index
 
         if default_index < 0:
-            lines.insert(model_index + 1, "  default: qwen3")
+            lines.insert(model_index + 1, f"  default: {DEFAULT_ZHAN_AI_MODEL}")
             model_end += 1
             default_index = model_index + 1
         elif (
             re.match(r"^\s+default\s*:\s*([#].*)?$", lines[default_index])
             or re.match(r"^\s+default\s*:\s*['\"]?gpt-4o-mini['\"]?\s*(#.*)?$", lines[default_index])
         ):
-            lines[default_index] = "  default: qwen3"
+            lines[default_index] = f"  default: {DEFAULT_ZHAN_AI_MODEL}"
 
         provider_index = -1
         for index in range(model_index + 1, model_end):
@@ -74,13 +205,13 @@ def configure_config(path: Path) -> str:
         if providers_index < 0:
             if lines and lines[-1] != "":
                 lines.append("")
+            model_lines = zhan_ai_model_lines(discovered_models or [DEFAULT_ZHAN_AI_MODEL])
             lines.extend([
                 "providers:",
                 "  zhan_ai:",
                 '    api: "${ZHANCLAW_BASE_URL}"',
                 "    key_env: ZHANCLAW_API_KEY",
-                "    models:",
-                "      - qwen3",
+                *model_lines,
             ])
             return
 
@@ -92,12 +223,12 @@ def configure_config(path: Path) -> str:
                 break
 
         if zhan_index < 0:
+            model_lines = zhan_ai_model_lines(discovered_models or [DEFAULT_ZHAN_AI_MODEL])
             lines[providers_index + 1:providers_index + 1] = [
                 "  zhan_ai:",
                 '    api: "${ZHANCLAW_BASE_URL}"',
                 "    key_env: ZHANCLAW_API_KEY",
-                "    models:",
-                "      - qwen3",
+                *model_lines,
             ]
             return
 
@@ -135,6 +266,7 @@ def configure_config(path: Path) -> str:
                 models_index = index
                 break
 
+        desired_model_lines = zhan_ai_model_lines(discovered_models or [DEFAULT_ZHAN_AI_MODEL])
         if models_index < 0:
             model_insert_index = zhan_end
             for index in range(zhan_index + 1, zhan_end):
@@ -143,10 +275,12 @@ def configure_config(path: Path) -> str:
                     break
                 if re.match(r"^\s+api\s*:", lines[index]):
                     model_insert_index = index + 1
-            lines[model_insert_index:model_insert_index] = [
-                "    models:",
-                "      - qwen3",
-            ]
+            lines[model_insert_index:model_insert_index] = desired_model_lines
+        elif discovered_models:
+            models_end = nested_block_end(models_index, 4)
+            if models_end == models_index + 1 and lines[models_index].strip() != "models:":
+                models_end = models_index + 1
+            lines[models_index:models_end] = desired_model_lines
         else:
             inline_match = re.match(r"^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$", lines[models_index])
             has_inline_qwen3 = bool(
@@ -157,9 +291,9 @@ def configure_config(path: Path) -> str:
                 inline_models = inline_match.group(2).strip()
                 inline_comment = inline_match.group(3) or ""
                 if inline_models:
-                    lines[models_index] = f"{inline_match.group(1)}[{inline_models}, qwen3]{inline_comment}"
+                    lines[models_index] = f"{inline_match.group(1)}[{inline_models}, {DEFAULT_ZHAN_AI_MODEL}]{inline_comment}"
                 else:
-                    lines[models_index] = f"{inline_match.group(1)}[qwen3]{inline_comment}"
+                    lines[models_index] = f"{inline_match.group(1)}[{DEFAULT_ZHAN_AI_MODEL}]{inline_comment}"
             elif re.match(r"^\s+models\s*:\s*$", lines[models_index]):
                 models_end = nested_block_end(models_index, 4)
                 has_qwen3_model = any(
@@ -167,7 +301,7 @@ def configure_config(path: Path) -> str:
                     for index in range(models_index + 1, models_end)
                 )
                 if not has_qwen3_model:
-                    lines.insert(models_index + 1, "      - qwen3")
+                    lines.insert(models_index + 1, f"      - {DEFAULT_ZHAN_AI_MODEL}")
 
     def remove_legacy_api_server_port() -> str | None:
         legacy_port = None
@@ -291,9 +425,16 @@ def configure_config(path: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Configure Hermes offline installer config.yaml defaults.")
     parser.add_argument("config_path", type=Path)
+    parser.add_argument(
+        "--env-path",
+        action="append",
+        default=[],
+        type=Path,
+        help="Optional .env path to consult for ZHANCLAW_* and legacy model settings.",
+    )
     args = parser.parse_args()
 
-    api_server_port = configure_config(args.config_path)
+    api_server_port = configure_config(args.config_path, env_paths=args.env_path)
     print("Configured default model provider: custom:zhan_ai")
     print(f"Configured API server platform port: {api_server_port}")
 

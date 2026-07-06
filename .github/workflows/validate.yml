@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Check Python packaging scripts
-        run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py scripts/configure_config.py
+        run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py packaging/resolve_hermes_source.py scripts/configure_config.py
 
       - name: Check Unix shell script syntax
         shell: bash
