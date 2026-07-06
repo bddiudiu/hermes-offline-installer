@@ -1420,13 +1420,7 @@ $ConfigureConfigScript = Join-Path $BundleDir "scripts\configure_config.py"
 if (-not (Test-Path $ConfigureConfigScript)) {
   throw "Missing config migration script: $ConfigureConfigScript"
 }
-$ConfigureConfigArgs = @($ConfigureConfigScript, $ConfigPath)
-foreach ($CandidateEnvPath in @($EnvPath, $LegacyEnvPath)) {
-  if ($CandidateEnvPath) {
-    $ConfigureConfigArgs += @("--env-path", $CandidateEnvPath)
-  }
-}
-& $PythonBin @ConfigureConfigArgs
+& $PythonBin $ConfigureConfigScript $ConfigPath
 if ($LASTEXITCODE -ne 0) {
   throw "Config migration failed with exit code $LASTEXITCODE."
 }
