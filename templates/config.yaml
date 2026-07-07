@@ -1,6 +1,7 @@
 model:
   default: qwen3
   provider: custom:zhan_ai
+  supports_vision: true
 
 providers:
   zhan_ai:
