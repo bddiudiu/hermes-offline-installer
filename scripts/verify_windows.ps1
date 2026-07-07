@@ -94,7 +94,7 @@ $HermesExeShim = Join-Path $BinDir "hermes.exe"
 if (-not (Test-Path $HermesExeShim)) { throw "缺少 hermes.exe shim: $HermesExeShim" }
 if (-not (Test-Path $Config)) { throw "缺少 config.yaml" }
 $ConfigText = Get-Content -Raw -Path $Config -Encoding UTF8
-if ($ConfigText -notmatch '(?m)^\s+default\s*:\s*qwen3\s*(#.*)?$') { throw "config.yaml 未默认选择 qwen3 模型" }
+if ($ConfigText -notmatch '(?m)^\s+default\s*:\s*[^#\r\n]+') { throw "config.yaml 缺少默认模型配置" }
 if ($ConfigText -notmatch 'provider:\s*custom:zhan_ai') { throw "config.yaml 未默认选择 zhan_ai 渠道" }
 if ($ConfigText -notmatch 'zhan_ai:' -or $ConfigText -notmatch 'ZHANCLAW_BASE_URL' -or $ConfigText -notmatch 'ZHANCLAW_API_KEY') { throw "config.yaml 缺少 zhan_ai provider 配置" }
 if ($ConfigText -notmatch '(?m)^\s+-\s*qwen3\s*(#.*)?$|^\s+models\s*:\s*\[[^\r\n\]]*qwen3') { throw "config.yaml 缺少 zhan_ai qwen3 模型兜底" }

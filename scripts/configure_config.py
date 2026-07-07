@@ -7,6 +7,47 @@ import re
 
 
 DEFAULT_ZHAN_AI_MODEL = "qwen3"
+
+
+def _parse_yaml_scalar(line: str) -> str | None:
+    if ":" not in line:
+        return None
+    value = line.split(":", 1)[1].strip()
+    if not value or value.startswith("#"):
+        return None
+    value = re.sub(r"\s+#.*$", "", value).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value or None
+
+
+def _parse_inline_model_list(value: str) -> list[str]:
+    model_ids: list[str] = []
+    for part in value.split(","):
+        candidate = part.strip()
+        if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {"'", '"'}:
+            candidate = candidate[1:-1]
+        candidate = candidate.strip()
+        if candidate:
+            model_ids.append(candidate)
+    return model_ids
+
+
+def _dedupe_model_ids(model_ids: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for model_id in model_ids:
+        candidate = (model_id or "").strip()
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        ordered.append(candidate)
+    return ordered
+
+
 def configure_config(path: Path) -> str:
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
@@ -34,11 +75,11 @@ def configure_config(path: Path) -> str:
                 return index
         return len(lines)
 
-    def ensure_model_provider() -> None:
+    def ensure_model_provider() -> str:
         model_index = find_top_level_key("model")
         if model_index < 0:
             lines[0:0] = ["model:", f"  default: {DEFAULT_ZHAN_AI_MODEL}", "  provider: custom:zhan_ai", ""]
-            return
+            return DEFAULT_ZHAN_AI_MODEL
 
         model_end = top_level_block_end(model_index)
         default_index = -1
@@ -53,11 +94,12 @@ def configure_config(path: Path) -> str:
             lines.insert(model_index + 1, f"  default: {DEFAULT_ZHAN_AI_MODEL}")
             model_end += 1
             default_index = model_index + 1
-        elif (
-            re.match(r"^\s+default\s*:\s*([#].*)?$", lines[default_index])
-            or re.match(r"^\s+default\s*:\s*['\"]?gpt-4o-mini['\"]?\s*(#.*)?$", lines[default_index])
-        ):
+            default_model = DEFAULT_ZHAN_AI_MODEL
+        else:
+            default_model = _parse_yaml_scalar(lines[default_index])
+        if not default_model:
             lines[default_index] = f"  default: {DEFAULT_ZHAN_AI_MODEL}"
+            default_model = DEFAULT_ZHAN_AI_MODEL
 
         provider_index = -1
         for index in range(model_index + 1, model_end):
@@ -69,8 +111,11 @@ def configure_config(path: Path) -> str:
             lines[provider_index] = "  provider: custom:zhan_ai"
         else:
             lines.insert(default_index + 1, "  provider: custom:zhan_ai")
+        return default_model
 
-    def ensure_zhan_ai_provider() -> None:
+    def ensure_zhan_ai_provider(default_model: str) -> None:
+        required_models = _dedupe_model_ids([default_model, DEFAULT_ZHAN_AI_MODEL])
+
         providers_index = find_top_level_key("providers")
         if providers_index < 0:
             if lines and lines[-1] != "":
@@ -81,7 +126,7 @@ def configure_config(path: Path) -> str:
                 '    api: "${ZHANCLAW_BASE_URL}"',
                 "    key_env: ZHANCLAW_API_KEY",
                 "    models:",
-                f"      - {DEFAULT_ZHAN_AI_MODEL}",
+                *[f"      - {model_id}" for model_id in required_models],
             ])
             return
 
@@ -98,7 +143,7 @@ def configure_config(path: Path) -> str:
                 '    api: "${ZHANCLAW_BASE_URL}"',
                 "    key_env: ZHANCLAW_API_KEY",
                 "    models:",
-                f"      - {DEFAULT_ZHAN_AI_MODEL}",
+                *[f"      - {model_id}" for model_id in required_models],
             ]
             return
 
@@ -146,29 +191,41 @@ def configure_config(path: Path) -> str:
                     model_insert_index = index + 1
             lines[model_insert_index:model_insert_index] = [
                 "    models:",
-                f"      - {DEFAULT_ZHAN_AI_MODEL}",
+                *[f"      - {model_id}" for model_id in required_models],
             ]
         else:
             inline_match = re.match(r"^(\s+models\s*:\s*)\[(.*)\](\s*#.*)?$", lines[models_index])
-            has_inline_qwen3 = bool(
-                inline_match
-                and re.search(r"(^|[^A-Za-z0-9_-])qwen3([^A-Za-z0-9_-]|$)", inline_match.group(2))
-            )
-            if inline_match and not has_inline_qwen3:
-                inline_models = inline_match.group(2).strip()
-                inline_comment = inline_match.group(3) or ""
-                if inline_models:
-                    lines[models_index] = f"{inline_match.group(1)}[{inline_models}, {DEFAULT_ZHAN_AI_MODEL}]{inline_comment}"
-                else:
-                    lines[models_index] = f"{inline_match.group(1)}[{DEFAULT_ZHAN_AI_MODEL}]{inline_comment}"
+            if inline_match:
+                inline_models = _parse_inline_model_list(inline_match.group(2))
+                updated_models = _dedupe_model_ids([*inline_models, *required_models])
+                if len(updated_models) != len(inline_models):
+                    inline_comment = inline_match.group(3) or ""
+                    lines[models_index] = f"{inline_match.group(1)}[{', '.join(updated_models)}]{inline_comment}"
             elif re.match(r"^\s+models\s*:\s*$", lines[models_index]):
                 models_end = nested_block_end(models_index, 4)
-                has_qwen3_model = any(
-                    re.match(r"^\s+(?:-\s*)?[\"']?qwen3[\"']?\s*(?::|#.*)?$", lines[index])
-                    for index in range(models_index + 1, models_end)
-                )
-                if not has_qwen3_model:
-                    lines.insert(models_index + 1, f"      - {DEFAULT_ZHAN_AI_MODEL}")
+                existing_model_ids: list[str] = []
+                for index in range(models_index + 1, models_end):
+                    match = re.match(r"^\s*-\s*([^\s#][^#]*?)\s*(#.*)?$", lines[index])
+                    if not match:
+                        continue
+                    model_id = match.group(1).strip()
+                    if len(model_id) >= 2 and model_id[0] == model_id[-1] and model_id[0] in {"'", '"'}:
+                        model_id = model_id[1:-1]
+                    existing_model_ids.append(model_id)
+                existing_model_ids = _dedupe_model_ids(existing_model_ids)
+                existing_lower = {model_id.lower() for model_id in existing_model_ids}
+                missing_models = [
+                    model_id for model_id in required_models if model_id.lower() not in existing_lower
+                ]
+                if missing_models:
+                    insertion_index = models_index + 1
+                    for model_id in reversed(missing_models):
+                        lines.insert(insertion_index, f"      - {model_id}")
+            else:
+                lines[models_index:models_index + 1] = [
+                    "    models:",
+                    *[f"      - {model_id}" for model_id in required_models],
+                ]
 
     def remove_legacy_api_server_port() -> str | None:
         legacy_port = None
@@ -281,8 +338,8 @@ def configure_config(path: Path) -> str:
         return ""
 
     legacy_port = remove_legacy_api_server_port()
-    ensure_model_provider()
-    ensure_zhan_ai_provider()
+    default_model = ensure_model_provider()
+    ensure_zhan_ai_provider(default_model)
     ensure_api_server_platform(legacy_port)
     api_server_port = get_api_server_platform_port()
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
