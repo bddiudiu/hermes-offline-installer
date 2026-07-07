@@ -1316,10 +1316,17 @@ $HermesShimEnvironmentLines = @($HermesInstallerEnvironment.GetEnumerator() | Fo
 $HermesShimDefaultEnvironmentLines = @($HermesDefaultEnvironment.GetEnumerator() | ForEach-Object {
   'if not defined {0} set "{0}={1}"' -f $_.Key, $_.Value
 })
-$HermesShimUserEnvironmentLines = @(
-  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_BASE_URL 2^>nul ^| findstr /I "ZHANCLAW_BASE_URL"'') do set "ZHANCLAW_BASE_URL=%%B"',
-  'for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v ZHANCLAW_API_KEY 2^>nul ^| findstr /I "ZHANCLAW_API_KEY"'') do set "ZHANCLAW_API_KEY=%%B"'
-)
+$HermesShimUserEnvironmentLines = @()
+foreach ($ZhanEnvName in @("ZHANCLAW_BASE_URL", "ZHANCLAW_API_KEY")) {
+  if ($TargetUserSid -and $TargetUserSid -ne $CurrentUserSid) {
+    $HermesShimUserEnvironmentLines += (
+      'if not defined {0} for /f "tokens=2,*" %%A in (''reg query HKU\{1}\Environment /v {0} 2^>nul ^| findstr /I "{0}"'') do set "{0}=%%B"' -f $ZhanEnvName, $TargetUserSid
+    )
+  }
+  $HermesShimUserEnvironmentLines += (
+    'if not defined {0} for /f "tokens=2,*" %%A in (''reg query HKCU\Environment /v {0} 2^>nul ^| findstr /I "{0}"'') do set "{0}=%%B"' -f $ZhanEnvName
+  )
+}
 $ShimLines = @(
   "@echo off",
   "chcp 65001 >nul"
