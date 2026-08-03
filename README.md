@@ -16,6 +16,7 @@ The project builds redistributable one-click offline installers for Windows, mac
 - Supports portable mode through `HERMES_PORTABLE_MODE=1` or `install.cmd -Portable`, keeping runtime and user data inside the extracted directory.
 - Hermes shims default common third-party caches to `$HERMES_HOME/cache`, avoiding surprise writes to the system drive from HuggingFace, Playwright, tiktoken, Torch, and similar libraries.
 - Exports Hermes runtime resources, including bundled Agent Skills, optional skills catalog, optional MCP catalog, locales, bundled plugins, Dashboard `web_dist`, and Dashboard TUI `tui_dist`.
+- Bundles the `cn-mirrors` skill by default so mainland-China-friendly mirror guidance is available immediately after install.
 
 ## Artifacts
 
@@ -278,7 +279,7 @@ hermes dashboard
 
 ## Build
 
-The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.12.13`, downloads wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle.
+The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.12.13`, snapshots the selected Hermes source checkout, downloads dependency wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle. Hermes itself is no longer built as a wheel because current upstream releases support source-checkout installs instead of PyPI/wheel distribution.
 
 Local build example:
 
@@ -302,7 +303,7 @@ python3 packaging/build_bundle.py \
   --output dist
 ```
 
-The installer reads `wheelhouse/manifest.json` and installs the extras recorded at build time, for example `hermes-agent[cn-desktop]`, instead of hard-coding `hermes-agent[all]`.
+The installer reads the recorded editable requirement and installs the bundled source snapshot with the extras selected at build time, for example `.[cn-desktop]`, instead of hard-coding `.[all]`. Dependency resolution remains fully offline through the bundled wheelhouse.
 
 Supported platform values:
 
@@ -315,7 +316,7 @@ mac-arm64
 
 `packaging/build_wheelhouse.py` uses `HERMES_SOURCE` from `packaging/manifest.py` by default. For GitHub Actions manual runs, the `hermes_source` input can override the Hermes package spec.
 
-The wheelhouse manifest records the actual `hermes_version`, `hermes_install_spec`, `hermes_source_commit`, and extras. The final bundle `manifest.json` carries these fields forward so a zip can be inspected for its real Hermes version.
+The wheelhouse manifest records the actual `hermes_version`, `hermes_install_mode`, `hermes_install_spec`, `hermes_source_commit`, and extras. The final bundle `manifest.json` carries these fields forward so a zip can be inspected for its real Hermes version and source-based install mode.
 
 The offline wheelhouse includes dependencies needed by `hermes dashboard`, including `fastapi`, `python-multipart`, `uvicorn`, and `websockets`. The builder also exports runtime resources from Hermes source:
 
@@ -327,11 +328,12 @@ The offline wheelhouse includes dependencies needed by `hermes dashboard`, inclu
 - Dashboard `web_dist`
 - Dashboard TUI `tui_dist`
 
-Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources` and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
+Installers copy the source snapshot to `$HERMES_OFFLINE_HOME/runtime/hermes-agent`, install it into the bundled venv in editable mode without network access, copy runtime resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
 
 ## Install Layout
 
 - Runtime: `C:\Program Files\StarSoftComm\ZhanClaw\Hermes\runtime` on Windows or `~/.hermes-offline/runtime` on Unix; override with `HERMES_OFFLINE_HOME`.
+- Hermes source snapshot: `$HERMES_OFFLINE_HOME/runtime/hermes-agent`; the venv uses an editable install that resolves imports from this directory.
 - Runtime resources: `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, containing `skills`, `optional-skills`, `optional-mcps`, `locales`, `plugins`, `web_dist`, and `tui_dist`.
 - Shim: `~/.local/bin/hermes` on Unix; `%HERMES_OFFLINE_HOME%\bin\hermes.cmd` on Windows.
 - Portable mode shim: `<extracted-dir>\.hermes-offline\bin\hermes.cmd` on Windows; `<extracted-dir>/.hermes-offline/bin/hermes` on Unix.
@@ -340,6 +342,7 @@ Installers copy these resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resource
 - Common third-party caches default to `$HERMES_HOME/cache` through the Hermes shims, including `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TORCH_HOME`, `TIKTOKEN_CACHE_DIR`, `MPLCONFIGDIR`, `NLTK_DATA`, `PLAYWRIGHT_BROWSERS_PATH`, and temp directories.
 - Hermes shims default common download sources to mainland China mirrors when the user has not already set them: `PIP_INDEX_URL` and `UV_DEFAULT_INDEX` use Tsinghua PyPI, `HF_ENDPOINT` uses `hf-mirror.com`, `PLAYWRIGHT_DOWNLOAD_HOST` uses npmmirror Playwright assets, and `npm_config_registry` uses npmmirror npm.
 - Bundled Agent Skills are restored from runtime resources during install or upgrade. User-modified or deleted skills are preserved according to the Hermes bundled manifest rules.
+- This installer additionally bundles `cn-mirrors`, a user-invocable skill that rewrites public GitHub, npm, pip, and WinGet download commands toward mainland-friendly mirrors when that is safe.
 - Hermes Python: `HERMES_PYTHON` is derived from `$HERMES_OFFLINE_HOME/runtime/venv`; Unix shims export the Hermes environment variables listed above, and the Windows installer writes them to the user environment.
 
 If Windows reports that the Hermes Python interpreter cannot be found when checking optional dependencies, rebuild the full user environment from `HERMES_HOME` and `HERMES_OFFLINE_HOME`:

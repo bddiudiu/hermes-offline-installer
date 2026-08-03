@@ -266,6 +266,7 @@ $RuntimeTemplates = Join-Path $RuntimeDir "templates"
 $RuntimeCommands = Join-Path $RuntimeDir "commands"
 $RuntimeBundle = Join-Path $RuntimeDir "bundle-runtime"
 $RuntimeResources = Join-Path $RuntimeDir "hermes-resources"
+$RuntimeSource = Join-Path $RuntimeDir "hermes-agent"
 $ExistingHermesCmd = Join-Path $BinDir "hermes.cmd"
 
 function Test-ProcessMatchesPath {
@@ -928,7 +929,8 @@ function Sync-BundledSkills {
   }
   foreach ($RequiredSkill in @(
     (Join-Path $SkillsDir "apple\imessage\SKILL.md"),
-    (Join-Path $SkillsDir "autonomous-ai-agents\codex\SKILL.md")
+    (Join-Path $SkillsDir "autonomous-ai-agents\codex\SKILL.md"),
+    (Join-Path $SkillsDir "cn-mirrors\SKILL.md")
   )) {
     if (-not (Test-Path $RequiredSkill)) {
       throw "Bundled Agent Skill is missing after sync: $RequiredSkill"
@@ -1161,6 +1163,10 @@ $BundledResources = Join-Path $BundleDir "hermes-resources"
 if (-not (Test-Path $BundledResources)) {
   throw "Missing Hermes runtime resources: $BundledResources"
 }
+$BundledSource = Join-Path $BundleDir "hermes-agent"
+if (-not (Test-Path (Join-Path $BundledSource "pyproject.toml"))) {
+  throw "Missing Hermes source snapshot: $BundledSource"
+}
 
 $RuntimeBackupDir = $null
 $RuntimeInstallCommitted = $false
@@ -1177,7 +1183,7 @@ if (Test-Path $RuntimeDir) {
   $RuntimeRebuildStarted = $true
 }
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
-foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $RuntimeResources, $VenvDir)) {
+foreach ($Path in @($RuntimeWheelhouse, $RuntimeTemplates, $RuntimeCommands, $RuntimeBundle, $RuntimeResources, $RuntimeSource, $VenvDir)) {
   Remove-InstallPath -Path $Path
 }
 Copy-Item -Recurse -Force $Wheelhouse $RuntimeWheelhouse
@@ -1188,6 +1194,7 @@ Copy-Item -Force (Join-Path $ScriptDir "shutdown_windows.ps1") (Join-Path $Runti
 Copy-Item -Force (Join-Path $ScriptDir "uninstall_windows.ps1") (Join-Path $RuntimeCommands "uninstall_windows.ps1")
 Copy-Item -Recurse -Force (Join-Path $BundleDir "runtime") $RuntimeBundle
 Copy-Item -Recurse -Force $BundledResources $RuntimeResources
+Copy-Item -Recurse -Force $BundledSource $RuntimeSource
 
 $Candidates = @(
   (Join-Path $RuntimeBundle "python\python.exe"),
@@ -1242,14 +1249,34 @@ $RuntimeRequirements = Join-Path $RuntimeWheelhouse "requirements.txt"
 if (-not (Test-Path $RuntimeRequirements)) {
   throw "Missing wheelhouse requirements: $RuntimeRequirements"
 }
-Write-Host "Installing Hermes requirements: $RuntimeRequirements"
+$HermesEditableRequirementPath = Join-Path $RuntimeWheelhouse "hermes-editable-requirement.txt"
+if (-not (Test-Path $HermesEditableRequirementPath)) {
+  throw "Missing Hermes editable requirement: $HermesEditableRequirementPath"
+}
+$HermesEditableRequirement = (Get-Content -Raw -Path $HermesEditableRequirementPath -Encoding UTF8).Trim()
+if ($HermesEditableRequirement -ne "." -and $HermesEditableRequirement -notmatch '^\.\[[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*\]$') {
+  throw "Invalid Hermes editable requirement: $HermesEditableRequirement"
+}
+Write-Host "Installing offline build requirements: $RuntimeRequirements"
 & $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse -r $RuntimeRequirements
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed with exit code $LASTEXITCODE."
 }
-& $VenvPython -c "import aiohttp, fastapi, multipart, uvicorn, websockets"
+Write-Host "Installing Hermes from bundled source: $RuntimeSource ($HermesEditableRequirement)"
+$HermesEditableInstallExitCode = 1
+Push-Location $RuntimeSource
+try {
+  & $VenvPython -m pip install --only-binary=:all: --no-index --find-links $RuntimeWheelhouse --no-build-isolation -e $HermesEditableRequirement
+  $HermesEditableInstallExitCode = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+if ($HermesEditableInstallExitCode -ne 0) {
+  throw "Hermes editable install failed with exit code $HermesEditableInstallExitCode."
+}
+& $VenvPython -c "import aiohttp, fastapi, hermes_cli, multipart, uvicorn, websockets"
 if ($LASTEXITCODE -ne 0) {
-  throw "Gateway dependency check failed with exit code $LASTEXITCODE."
+  throw "Hermes dependency check failed with exit code $LASTEXITCODE."
 }
 
 $HermesExe = Join-Path $VenvDir "Scripts\hermes.exe"

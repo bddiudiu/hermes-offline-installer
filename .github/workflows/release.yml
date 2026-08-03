@@ -8,7 +8,7 @@ on:
         required: false
         default: ""
       hermes_extras:
-        description: "Hermes extras to pre-bake into the offline wheelhouse"
+        description: "Hermes extras to pre-bake into the offline source install"
         required: false
         default: "all"
   push:

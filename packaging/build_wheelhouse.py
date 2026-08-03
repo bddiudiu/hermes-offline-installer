@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
-import shutil
-import zipfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
-from read_hermes_version import wheel_version
 
 DEFAULT_HERMES_EXTRAS = "all"
 PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
@@ -32,8 +32,16 @@ OFFLINE_REQUIRED_WHEELS = [
     "aiohttp",
     "fastapi",
     "python_multipart",
+    "setuptools",
     "uvicorn",
     "websockets",
+    "wheel",
+]
+
+BUILD_REQUIREMENTS = [
+    # Match the build backend range declared by current upstream Hermes.
+    "setuptools>=77.0,<83",
+    "wheel",
 ]
 
 HERMES_RESOURCE_DIRS = [
@@ -47,6 +55,7 @@ HERMES_RESOURCE_DIRS = [
 HERMES_RESOURCE_SENTINELS = [
     "skills/apple/imessage/SKILL.md",
     "skills/autonomous-ai-agents/codex/SKILL.md",
+    "skills/cn-mirrors/SKILL.md",
     "skills/software-development/plan/SKILL.md",
     "optional-skills/productivity/memento-flashcards/SKILL.md",
     "optional-mcps/linear/manifest.yaml",
@@ -56,11 +65,38 @@ HERMES_RESOURCE_SENTINELS = [
     "tui_dist/package.json",
 ]
 
+HERMES_SOURCE_SENTINELS = [
+    "pyproject.toml",
+    "setup.py",
+    "uv.lock",
+    "hermes",
+    "hermes_cli/main.py",
+    "hermes_cli/web_dist/index.html",
+    "hermes_cli/tui_dist/entry.js",
+    "tools/skills_sync.py",
+]
+
+HERMES_SOURCE_IGNORES = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "*.egg-info",
+    "node_modules",
+    "venv",
+]
+
 
 @dataclass(frozen=True)
 class HermesSource:
     spec: str
     source_dir: Path | None
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCAL_BUNDLED_RESOURCES_DIR = ROOT / "bundled-resources"
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -163,7 +199,21 @@ def export_hermes_resources(source_dir: Path | None, output: Path) -> None:
     shutil.copy2(tui_entry, tui_resource_dir / "dist" / "entry.js")
     shutil.copy2(source_dir / "ui-tui" / "package.json", tui_resource_dir / "package.json")
 
+    overlay_local_bundled_resources(resources_dir)
     validate_hermes_resources(resources_dir)
+
+
+def overlay_local_bundled_resources(resources_dir: Path) -> None:
+    if not LOCAL_BUNDLED_RESOURCES_DIR.is_dir():
+        return
+
+    for source in LOCAL_BUNDLED_RESOURCES_DIR.rglob("*"):
+        if source.is_dir():
+            continue
+        relative_path = source.relative_to(LOCAL_BUNDLED_RESOURCES_DIR)
+        destination = resources_dir / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
 
 
 def validate_hermes_resources(resources_dir: Path) -> None:
@@ -193,17 +243,59 @@ def validate_hermes_resources(resources_dir: Path) -> None:
     )
 
 
-def remove_source_archives(output: Path, distribution: str) -> None:
-    prefixes = {
-        distribution.replace("_", "-").lower(),
-        distribution.replace("-", "_").lower(),
-    }
-    for artifact in output.iterdir():
-        name = artifact.name.lower()
-        if not (name.endswith(".zip") or name.endswith(".tar.gz")):
-            continue
-        if any(name.startswith(f"{prefix}-") for prefix in prefixes):
-            artifact.unlink()
+def export_hermes_source(source_dir: Path | None, output: Path) -> Path:
+    if source_dir is None:
+        raise SystemExit(
+            "Cannot bundle Hermes source because HERMES_SOURCE did not resolve "
+            "to a local source checkout. Use a git or file:// source."
+        )
+
+    bundled_source = output / "hermes-source"
+    if bundled_source.exists():
+        shutil.rmtree(bundled_source)
+    shutil.copytree(
+        source_dir,
+        bundled_source,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(*HERMES_SOURCE_IGNORES),
+    )
+    validate_hermes_source(bundled_source)
+    return bundled_source
+
+
+def validate_hermes_source(source_dir: Path) -> None:
+    missing = [rel for rel in HERMES_SOURCE_SENTINELS if not (source_dir / rel).is_file()]
+    if missing:
+        raise SystemExit(
+            "Hermes source snapshot is incomplete. Missing: " + ", ".join(sorted(missing))
+        )
+    generated_dirs = list(source_dir.rglob("node_modules")) + list(source_dir.rglob("__pycache__"))
+    if generated_dirs:
+        raise SystemExit(
+            "Hermes source snapshot contains generated directories: "
+            + ", ".join(str(path.relative_to(source_dir)) for path in generated_dirs[:10])
+        )
+
+
+def read_source_version(source_dir: Path) -> str:
+    pyproject = source_dir / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as handle:
+            project = tomllib.load(handle).get("project", {})
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise SystemExit(f"Cannot read Hermes version from {pyproject}: {exc}") from exc
+    version = str(project.get("version", "")).strip()
+    if not version:
+        raise SystemExit(f"Hermes source does not declare project.version: {pyproject}")
+    return version
+
+
+def parse_extras(value: str) -> list[str]:
+    extras = [item.strip() for item in value.split(",") if item.strip()]
+    invalid = [item for item in extras if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", item)]
+    if invalid:
+        raise SystemExit("Invalid Hermes extras: " + ", ".join(invalid))
+    return extras
 
 
 def remove_distribution_artifacts(output: Path, distribution: str) -> None:
@@ -239,40 +331,6 @@ def validate_required_wheels(output: Path, distributions: list[str]) -> None:
         )
 
 
-def validate_hermes_wheel_has_dashboard(output: Path) -> None:
-    wheels = sorted(output.glob("hermes_agent-*.whl")) + sorted(output.glob("hermes-agent-*.whl"))
-    if not wheels:
-        raise SystemExit("Missing hermes-agent wheel")
-    wheel = wheels[-1]
-    with zipfile.ZipFile(wheel) as zf:
-        names = set(zf.namelist())
-    if "hermes_cli/web_dist/index.html" not in names:
-        raise SystemExit(
-            f"{wheel.name} does not include hermes_cli/web_dist/index.html. "
-            "Build the dashboard frontend before building the wheel."
-        )
-    if "hermes_cli/tui_dist/entry.js" not in names:
-        raise SystemExit(
-            f"{wheel.name} does not include hermes_cli/tui_dist/entry.js. "
-            "Build the TUI frontend before building the wheel."
-        )
-
-
-def read_distribution_version(output: Path, distribution: str) -> str:
-    versions = sorted(
-        {
-            version
-            for artifact in output.iterdir()
-            if (version := wheel_version(artifact, distribution))
-        }
-    )
-    if not versions:
-        raise SystemExit(f"Missing {distribution} wheel version in {output}")
-    if len(versions) > 1:
-        raise SystemExit(f"Multiple {distribution} versions found: {', '.join(versions)}")
-    return versions[0]
-
-
 def git_commit(source_dir: Path | None) -> str | None:
     if source_dir is None or not (source_dir / ".git").exists():
         return None
@@ -297,20 +355,24 @@ def main() -> None:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
+    extras = parse_extras(args.extras)
+    extras_csv = ",".join(extras)
     hermes_spec = HERMES_SOURCE
     if " @ " in HERMES_SOURCE:
         hermes_name = HERMES_SOURCE.split(" @ ", 1)[0].split("[", 1)[0]
     else:
         hermes_name = "hermes-agent"
-    if args.extras:
+    if extras_csv:
         if " @ " in HERMES_SOURCE:
             name, source = HERMES_SOURCE.split(" @ ", 1)
-            hermes_spec = f"{name}[{args.extras}] @ {source}"
+            hermes_spec = f"{name}[{extras_csv}] @ {source}"
         else:
-            hermes_spec = f"hermes-agent[{args.extras}]"
-        hermes_install_spec = f"{hermes_name}[{args.extras}]"
+            hermes_spec = f"hermes-agent[{extras_csv}]"
+        hermes_install_spec = f"{hermes_name}[{extras_csv}]"
+        hermes_editable_requirement = f".[{extras_csv}]"
     else:
         hermes_install_spec = hermes_name
+        hermes_editable_requirement = "."
 
     work_dir = output.parent / "wheelhouse-build"
     if work_dir.exists():
@@ -320,9 +382,9 @@ def main() -> None:
     export_hermes_resources(hermes_source.source_dir, output)
 
     requirements = output / "requirements.txt"
-    install_requirement_lines = [hermes_install_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
+    install_requirement_lines = [*BUILD_REQUIREMENTS, "croniter", *OFFLINE_RUNTIME_REQUIREMENTS]
     download_requirements = work_dir / "requirements-download.txt"
-    download_requirement_lines = [hermes_spec, "croniter", "setuptools>=61.0", *OFFLINE_RUNTIME_REQUIREMENTS]
+    download_requirement_lines = [hermes_spec, *BUILD_REQUIREMENTS, "croniter", *OFFLINE_RUNTIME_REQUIREMENTS]
     download_requirements.write_text("\n".join(download_requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
@@ -342,21 +404,14 @@ def main() -> None:
         str(download_requirements),
     ], env=env)
     remove_distribution_artifacts(output, "hermes-agent")
-    run([
-        sys.executable,
-        "-m",
-        "pip",
-        "wheel",
-        "--wheel-dir",
-        str(output),
-        "--no-deps",
-        hermes_source.spec,
-    ], env=env)
-    remove_source_archives(output, "hermes-agent")
     requirements.write_text("\n".join(install_requirement_lines) + "\n", encoding="utf-8")
+    (output / "hermes-editable-requirement.txt").write_text(
+        hermes_editable_requirement + "\n",
+        encoding="utf-8",
+    )
     validate_required_wheels(output, OFFLINE_REQUIRED_WHEELS)
-    validate_hermes_wheel_has_dashboard(output)
-    hermes_version = read_distribution_version(output, "hermes-agent")
+    bundled_source = export_hermes_source(hermes_source.source_dir, output)
+    hermes_version = read_source_version(bundled_source)
 
     write_manifest(
         output / "manifest.json",
@@ -365,9 +420,12 @@ def main() -> None:
             "kind": "wheelhouse",
             "hermes_version": hermes_version,
             "hermes_install_spec": hermes_install_spec,
+            "hermes_install_mode": "editable-source",
+            "hermes_editable_requirement": hermes_editable_requirement,
+            "hermes_source_directory": "hermes-source",
             "hermes_resolved_spec": hermes_source.spec,
             "hermes_source_commit": git_commit(hermes_source.source_dir),
-            "extras": args.extras.split(",") if args.extras else [],
+            "extras": extras,
         },
     )
 

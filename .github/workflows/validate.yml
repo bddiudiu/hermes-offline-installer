@@ -24,6 +24,9 @@ jobs:
       - name: Check Python packaging scripts
         run: python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py packaging/manifest.py packaging/read_hermes_version.py packaging/resolve_hermes_source.py scripts/configure_config.py
 
+      - name: Run packaging regression tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
       - name: Check Unix shell script syntax
         shell: bash
         run: |

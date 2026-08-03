@@ -77,6 +77,8 @@ $HermesHome = if ($CustomHermesHome) {
 $BinDir = Join-Path $InstallRoot "bin"
 $HermesCmd = Join-Path $BinDir "hermes.cmd"
 $ResourcesDir = Join-Path $InstallRoot "runtime\hermes-resources"
+$SourceDir = Join-Path $InstallRoot "runtime\hermes-agent"
+$VenvPython = Join-Path $InstallRoot "runtime\venv\Scripts\python.exe"
 $Config = Join-Path $HermesHome "config.yaml"
 $EnvFile = Join-Path $HermesHome ".env"
 $SkillsDir = Join-Path $HermesHome "skills"
@@ -123,6 +125,7 @@ $SkillFiles = @(Get-ChildItem -Path $SkillsDir -Recurse -Filter "SKILL.md" -File
 if ($SkillFiles.Count -eq 0) { throw "Agent Skills 目录中缺少 SKILL.md: $SkillsDir" }
 if (-not (Test-Path (Join-Path $SkillsDir "apple\imessage\SKILL.md"))) { throw "缺少 apple Agent Skill" }
 if (-not (Test-Path (Join-Path $SkillsDir "autonomous-ai-agents\codex\SKILL.md"))) { throw "缺少 autonomous-ai-agents Agent Skill" }
+if (-not (Test-Path (Join-Path $SkillsDir "cn-mirrors\SKILL.md"))) { throw "缺少 cn-mirrors Agent Skill" }
 if (-not (Test-Path (Join-Path $ResourcesDir "optional-skills\productivity\memento-flashcards\SKILL.md"))) { throw "缺少 optional Agent Skills 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "optional-mcps\linear\manifest.yaml"))) { throw "缺少 optional MCP 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "locales\en.yaml"))) { throw "缺少 locales 资源" }
@@ -130,6 +133,16 @@ if (-not (Test-Path (Join-Path $ResourcesDir "plugins\disk-cleanup\plugin.yaml")
 if (-not (Test-Path (Join-Path $ResourcesDir "web_dist\index.html"))) { throw "缺少 Dashboard web_dist 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\dist\entry.js"))) { throw "缺少 Dashboard TUI dist 资源" }
 if (-not (Test-Path (Join-Path $ResourcesDir "tui_dist\package.json"))) { throw "缺少 Dashboard TUI package.json 资源" }
+if (-not (Test-Path (Join-Path $SourceDir "pyproject.toml"))) { throw "缺少 Hermes source pyproject.toml" }
+if (-not (Test-Path (Join-Path $SourceDir "hermes_cli\main.py"))) { throw "缺少 Hermes source CLI" }
+if (-not (Test-Path $VenvPython)) { throw "缺少 Hermes venv Python" }
+$ImportedHermesPath = (& $VenvPython -c "from pathlib import Path; import hermes_cli.main; print(Path(hermes_cli.main.__file__).resolve())").Trim()
+if ($LASTEXITCODE -ne 0) { throw "无法导入 Hermes source" }
+$ComparableSourceDir = (ConvertTo-ComparablePath -Path $SourceDir)
+$ComparableImportedHermesPath = (ConvertTo-ComparablePath -Path $ImportedHermesPath)
+if (-not $ComparableImportedHermesPath.StartsWith($ComparableSourceDir + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw "Hermes 未从 bundled source 导入: $ImportedHermesPath"
+}
 
 foreach ($RequiredShimName in @("hermes.cmd", "dashboard.cmd", "hermes-launch.cmd", "hermes-shutdown.cmd", "hermes-uninstall.cmd")) {
   $RequiredShim = Join-Path $BinDir $RequiredShimName

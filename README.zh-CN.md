@@ -16,6 +16,7 @@ Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、
 - 支持 `HERMES_PORTABLE_MODE=1` 或 `install.cmd -Portable` 的便携模式，runtime 和用户数据都留在解压目录内。
 - Hermes shim 会把常见第三方缓存默认收敛到 `$HERMES_HOME/cache`，避免 HuggingFace、Playwright、tiktoken、Torch 等默认写入系统盘。
 - 导出 Hermes runtime resources，包括内置 Agent Skills、optional skills catalog、optional MCP catalog、locales、bundled plugins、Dashboard `web_dist` 和 Dashboard TUI `tui_dist`。
+- 默认附带 `cn-mirrors` skill，安装完成后即可直接使用面向中国大陆网络环境的镜像加速提示。
 
 ## 产物
 
@@ -278,7 +279,7 @@ hermes dashboard
 
 ## 构建
 
-推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.12.13` 准备 portable Python runtime，下载 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。
+推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.12.13` 准备 portable Python runtime，固化选定版本的 Hermes 源码快照，下载依赖 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。Hermes 本体不再构建为 wheel，因为上游最新版本已经改为支持源码检出安装，不再支持 PyPI/wheel 分发。
 
 本地构建示例：
 
@@ -302,7 +303,7 @@ python3 packaging/build_bundle.py \
   --output dist
 ```
 
-安装器会读取 wheelhouse 内的 `manifest.json`，按构建时记录的 extras 安装，例如 `hermes-agent[cn-desktop]`，不再固定写死为 `hermes-agent[all]`。
+安装器会读取构建时记录的 editable requirement，使用对应 extras 安装包内源码快照，例如 `.[cn-desktop]`，不再固定写死为 `.[all]`；全部依赖仍只从包内 wheelhouse 解析，不访问网络。
 
 支持的平台参数：
 
@@ -315,7 +316,7 @@ mac-arm64
 
 `packaging/build_wheelhouse.py` 默认使用 `packaging/manifest.py` 中的 `HERMES_SOURCE`。GitHub Actions 手动运行时，可以通过 `hermes_source` 输入覆盖 Hermes package spec。
 
-wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`hermes_source_commit` 和 extras；最终 bundle 的 `manifest.json` 会继续带上这些字段，便于确认 zip 内实际 Hermes 版本。
+wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_mode`、`hermes_install_spec`、`hermes_source_commit` 和 extras；最终 bundle 的 `manifest.json` 会继续带上这些字段，便于确认 zip 内实际 Hermes 版本和源码安装模式。
 
 离线 wheelhouse 包含 `hermes dashboard` 所需依赖，包括 `fastapi`、`python-multipart`、`uvicorn` 和 `websockets`。构建器还会从 Hermes 源码导出 runtime resources：
 
@@ -327,11 +328,12 @@ wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`
 - Dashboard `web_dist`
 - Dashboard TUI `tui_dist`
 
-安装器会把这些资源复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-resources`，并把内置 Agent Skills 同步到 `$HERMES_HOME/skills`。Dashboard 的 Agent Skills 面板会读取这个目录。
+安装器会把源码快照复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-agent`，在完全离线的前提下以 editable 模式安装到包内 venv；同时把 runtime resources 复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-resources`，并把内置 Agent Skills 同步到 `$HERMES_HOME/skills`。Dashboard 的 Agent Skills 面板会读取这个目录。
 
 ## 安装位置
 
 - Runtime：Windows 默认为 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes\runtime`，Unix 默认为 `~/.hermes-offline/runtime`，可通过 `HERMES_OFFLINE_HOME` 覆盖。
+- Hermes 源码快照：`$HERMES_OFFLINE_HOME/runtime/hermes-agent`；venv 通过 editable 安装从该目录加载 Hermes。
 - Runtime resources：`$HERMES_OFFLINE_HOME/runtime/hermes-resources`，包含 `skills`、`optional-skills`、`optional-mcps`、`locales`、`plugins`、`web_dist` 和 `tui_dist`。
 - Shim：Unix 为 `~/.local/bin/hermes`；Windows 为 `%HERMES_OFFLINE_HOME%\bin\hermes.cmd`。
 - 便携模式：Windows 为 `<解压目录>\.hermes-offline\bin\hermes.cmd`，Unix 为 `<解压目录>/.hermes-offline/bin/hermes`。
@@ -340,6 +342,7 @@ wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_spec`、`
 - 常见第三方缓存默认随 Hermes shim 收敛到 `$HERMES_HOME/cache`，包括 `HF_HOME`、`HUGGINGFACE_HUB_CACHE`、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`MPLCONFIGDIR`、`NLTK_DATA`、`PLAYWRIGHT_BROWSERS_PATH` 和临时目录。
 - 当用户没有预先设置对应变量时，Hermes shim 会把常见下载源默认指向中国大陆镜像：`PIP_INDEX_URL` 和 `UV_DEFAULT_INDEX` 使用清华 PyPI，`HF_ENDPOINT` 使用 `hf-mirror.com`，`PLAYWRIGHT_DOWNLOAD_HOST` 使用 npmmirror Playwright 资源，`npm_config_registry` 使用 npmmirror npm。
 - 内置 Agent Skills 会在安装或升级时从 runtime resources 恢复。用户修改或删除过的 skills 会按照 Hermes bundled manifest 规则保留。
+- 本安装器还会额外附带 `cn-mirrors` skill，用于在安全前提下把公开 GitHub、npm、pip 和 WinGet 下载命令优先改写为适合中国大陆访问的镜像地址。
 - Hermes Python：`HERMES_PYTHON` 从 `$HERMES_OFFLINE_HOME/runtime/venv` 派生；Unix shim 会导出上表 Hermes 环境变量，Windows 安装器会写入用户环境变量。
 
 如果 Windows 在检查可选依赖时提示找不到 Hermes Python 解释器，可按 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 修复完整用户环境变量：

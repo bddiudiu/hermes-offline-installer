@@ -22,6 +22,8 @@ CONFIG="${HERMES_HOME}/config.yaml"
 ENV_FILE="${HERMES_HOME}/.env"
 SKILLS_DIR="${HERMES_HOME}/skills"
 RESOURCES_DIR="${HERMES_OFFLINE_HOME}/runtime/hermes-resources"
+SOURCE_DIR="${HERMES_OFFLINE_HOME}/runtime/hermes-agent"
+VENV_PYTHON="${HERMES_OFFLINE_HOME}/runtime/venv/bin/python"
 
 [ -x "$HERMES_BIN" ] || { echo "缺少 hermes shim: $HERMES_BIN" >&2; exit 1; }
 [ -f "$CONFIG" ] || { echo "缺少 config.yaml" >&2; exit 1; }
@@ -50,6 +52,7 @@ find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {
 }
 [ -f "$SKILLS_DIR/apple/imessage/SKILL.md" ] || { echo "缺少 apple Agent Skill" >&2; exit 1; }
 [ -f "$SKILLS_DIR/autonomous-ai-agents/codex/SKILL.md" ] || { echo "缺少 autonomous-ai-agents Agent Skill" >&2; exit 1; }
+[ -f "$SKILLS_DIR/cn-mirrors/SKILL.md" ] || { echo "缺少 cn-mirrors Agent Skill" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/optional-skills/productivity/memento-flashcards/SKILL.md" ] || { echo "缺少 optional Agent Skills 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/optional-mcps/linear/manifest.yaml" ] || { echo "缺少 optional MCP 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/locales/en.yaml" ] || { echo "缺少 locales 资源" >&2; exit 1; }
@@ -57,6 +60,22 @@ find "$SKILLS_DIR" -name SKILL.md -type f -print -quit | grep -q . || {
 [ -f "$RESOURCES_DIR/web_dist/index.html" ] || { echo "缺少 Dashboard web_dist 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/tui_dist/dist/entry.js" ] || { echo "缺少 Dashboard TUI dist 资源" >&2; exit 1; }
 [ -f "$RESOURCES_DIR/tui_dist/package.json" ] || { echo "缺少 Dashboard TUI package.json 资源" >&2; exit 1; }
+[ -f "$SOURCE_DIR/pyproject.toml" ] || { echo "缺少 Hermes source pyproject.toml" >&2; exit 1; }
+[ -f "$SOURCE_DIR/hermes_cli/main.py" ] || { echo "缺少 Hermes source CLI" >&2; exit 1; }
+[ -x "$VENV_PYTHON" ] || { echo "缺少 Hermes venv Python" >&2; exit 1; }
+"$VENV_PYTHON" - "$SOURCE_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+import hermes_cli.main
+
+source = Path(sys.argv[1]).resolve()
+module = Path(hermes_cli.main.__file__).resolve()
+try:
+    module.relative_to(source)
+except ValueError as exc:
+    raise SystemExit(f"Hermes is not imported from bundled source: {module}") from exc
+PY
 grep -q 'HERMES_OFFLINE_HOME' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_OFFLINE_HOME" >&2; exit 1; }
 grep -q 'HERMES_TUI_DIR' "$HERMES_BIN" || { echo "hermes shim 未设置 HERMES_TUI_DIR" >&2; exit 1; }
 for mirror_env_name in PIP_INDEX_URL UV_DEFAULT_INDEX HF_ENDPOINT PLAYWRIGHT_DOWNLOAD_HOST npm_config_registry; do

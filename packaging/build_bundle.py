@@ -27,6 +27,7 @@ UV_TARGETS = {
 HERMES_RESOURCE_SENTINELS = [
     "skills/apple/imessage/SKILL.md",
     "skills/autonomous-ai-agents/codex/SKILL.md",
+    "skills/cn-mirrors/SKILL.md",
     "optional-skills/productivity/memento-flashcards/SKILL.md",
     "optional-mcps/linear/manifest.yaml",
     "locales/en.yaml",
@@ -36,6 +37,16 @@ HERMES_RESOURCE_SENTINELS = [
     "tui_dist/package.json",
 ]
 
+HERMES_SOURCE_SENTINELS = [
+    "pyproject.toml",
+    "setup.py",
+    "uv.lock",
+    "hermes",
+    "hermes_cli/main.py",
+    "hermes_cli/web_dist/index.html",
+    "hermes_cli/tui_dist/entry.js",
+    "tools/skills_sync.py",
+]
 
 
 def run(cmd: list[str]) -> None:
@@ -60,9 +71,10 @@ def chmod_executable(path: Path) -> None:
 
 
 def write_windows_powershell_scripts_with_bom(bundle: Path) -> None:
-    for script in bundle.rglob("*.ps1"):
-        content = script.read_text(encoding="utf-8-sig")
-        script.write_text(content, encoding="utf-8-sig", newline="\r\n")
+    for script_root in [bundle / "installers", bundle / "scripts"]:
+        for script in script_root.rglob("*.ps1"):
+            content = script.read_text(encoding="utf-8-sig")
+            script.write_text(content, encoding="utf-8-sig", newline="\r\n")
 
 
 def prepare_uv(platform_name: str, bundle: Path) -> None:
@@ -142,6 +154,16 @@ def validate_hermes_resources(resources: Path) -> None:
     )
 
 
+def validate_hermes_source(source: Path) -> None:
+    if not source.is_dir():
+        raise SystemExit(f"缺少 Hermes source snapshot: {source}")
+    missing = [rel for rel in HERMES_SOURCE_SENTINELS if not (source / rel).is_file()]
+    if missing:
+        raise SystemExit(
+            "Hermes source snapshot is incomplete. Missing: " + ", ".join(sorted(missing))
+        )
+
+
 def archive_bundle(platform_name: str, bundle: Path, output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     if platform_name.startswith("win"):
@@ -200,6 +222,23 @@ def validate_archive_hermes_resources(platform_name: str, archive: Path) -> None
         )
 
 
+def validate_archive_hermes_source(platform_name: str, archive: Path) -> None:
+    prefix = f"hermes-offline-installer-{platform_name}/hermes-agent/"
+    expected = {prefix + rel for rel in HERMES_SOURCE_SENTINELS}
+    if platform_name.startswith("win"):
+        with zipfile.ZipFile(archive) as zf:
+            names = set(zf.namelist())
+    else:
+        with tarfile.open(archive, "r:gz") as tf:
+            names = set(tf.getnames())
+    missing = sorted(expected - names)
+    if missing:
+        raise SystemExit(
+            f"{archive.name} does not contain required Hermes source files: "
+            + ", ".join(path.removeprefix(prefix) for path in missing)
+        )
+
+
 def read_wheelhouse_manifest(wheelhouse: Path) -> dict[str, object]:
     manifest = wheelhouse / "manifest.json"
     if not manifest.is_file():
@@ -226,6 +265,9 @@ def main() -> None:
     resources_in_wheelhouse = bundle / "wheelhouse" / "hermes-resources"
     validate_hermes_resources(resources_in_wheelhouse)
     shutil.move(str(resources_in_wheelhouse), str(bundle / "hermes-resources"))
+    source_in_wheelhouse = bundle / "wheelhouse" / "hermes-source"
+    validate_hermes_source(source_in_wheelhouse)
+    shutil.move(str(source_in_wheelhouse), str(bundle / "hermes-agent"))
     copytree(ROOT / "installers", bundle / "installers")
     copytree(ROOT / "templates", bundle / "templates")
     copytree(ROOT / "scripts", bundle / "scripts")
@@ -255,6 +297,7 @@ def main() -> None:
             "wheelhouse": wheelhouse_manifest,
             "hermes_version": wheelhouse_manifest.get("hermes_version"),
             "hermes_extras": wheelhouse_manifest.get("extras"),
+            "hermes_install_mode": wheelhouse_manifest.get("hermes_install_mode"),
             "hermes_source_commit": wheelhouse_manifest.get("hermes_source_commit"),
         },
     )
@@ -262,6 +305,7 @@ def main() -> None:
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)
     validate_archive_hermes_resources(args.platform, archive)
+    validate_archive_hermes_source(args.platform, archive)
     print(f"created {archive}")
 
 

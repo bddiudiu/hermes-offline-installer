@@ -25,6 +25,7 @@ RUNTIME_WHEELHOUSE="$RUNTIME_DIR/wheelhouse"
 RUNTIME_TEMPLATES="$RUNTIME_DIR/templates"
 RUNTIME_BUNDLE="$RUNTIME_DIR/bundle-runtime"
 RUNTIME_RESOURCES="$RUNTIME_DIR/hermes-resources"
+RUNTIME_SOURCE="$RUNTIME_DIR/hermes-agent"
 
 mkdir -p "$BIN_DIR" "$HERMES_HOME"
 
@@ -155,7 +156,8 @@ sync_bundled_skills() {
   fi
   for required_skill in \
     "$HERMES_HOME/skills/apple/imessage/SKILL.md" \
-    "$HERMES_HOME/skills/autonomous-ai-agents/codex/SKILL.md"; do
+    "$HERMES_HOME/skills/autonomous-ai-agents/codex/SKILL.md" \
+    "$HERMES_HOME/skills/cn-mirrors/SKILL.md"; do
     if [ ! -f "$required_skill" ]; then
       echo "Bundled Agent Skill is missing after sync: $required_skill" >&2
       exit 1
@@ -171,14 +173,19 @@ if [ ! -d "$BUNDLE_DIR/hermes-resources" ]; then
   echo "缺少 Hermes runtime resources：$BUNDLE_DIR/hermes-resources" >&2
   exit 1
 fi
+if [ ! -f "$BUNDLE_DIR/hermes-agent/pyproject.toml" ]; then
+  echo "缺少 Hermes source snapshot：$BUNDLE_DIR/hermes-agent" >&2
+  exit 1
+fi
 
 trap restore_runtime_on_error ERR
 backup_existing_runtime
-rm -rf "$RUNTIME_WHEELHOUSE" "$RUNTIME_TEMPLATES" "$RUNTIME_BUNDLE" "$RUNTIME_RESOURCES" "$VENV_DIR"
+rm -rf "$RUNTIME_WHEELHOUSE" "$RUNTIME_TEMPLATES" "$RUNTIME_BUNDLE" "$RUNTIME_RESOURCES" "$RUNTIME_SOURCE" "$VENV_DIR"
 cp -R "$BUNDLE_DIR/wheelhouse" "$RUNTIME_WHEELHOUSE"
 cp -R "$BUNDLE_DIR/templates" "$RUNTIME_TEMPLATES"
 cp -R "$BUNDLE_DIR/runtime" "$RUNTIME_BUNDLE"
 cp -R "$BUNDLE_DIR/hermes-resources" "$RUNTIME_RESOURCES"
+cp -R "$BUNDLE_DIR/hermes-agent" "$RUNTIME_SOURCE"
 
 PYTHON_BIN=""
 REQUESTED_PYTHON="${HERMES_PYTHON:-}"
@@ -216,8 +223,29 @@ if [ ! -f "$RUNTIME_REQUIREMENTS" ]; then
   echo "缺少 wheelhouse requirements: $RUNTIME_REQUIREMENTS" >&2
   exit 1
 fi
-echo "Installing Hermes requirements: $RUNTIME_REQUIREMENTS"
+HERMES_EDITABLE_REQUIREMENT_FILE="$RUNTIME_WHEELHOUSE/hermes-editable-requirement.txt"
+if [ ! -f "$HERMES_EDITABLE_REQUIREMENT_FILE" ]; then
+  echo "缺少 Hermes editable requirement: $HERMES_EDITABLE_REQUIREMENT_FILE" >&2
+  exit 1
+fi
+HERMES_EDITABLE_REQUIREMENT="$(tr -d '\r\n' < "$HERMES_EDITABLE_REQUIREMENT_FILE")"
+if [ "$HERMES_EDITABLE_REQUIREMENT" != "." ] && \
+   [[ ! "$HERMES_EDITABLE_REQUIREMENT" =~ ^\.\[[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*\]$ ]]; then
+  echo "无效的 Hermes editable requirement: $HERMES_EDITABLE_REQUIREMENT" >&2
+  exit 1
+fi
+echo "Installing offline build requirements: $RUNTIME_REQUIREMENTS"
 "$VENV_PYTHON" -m pip install --only-binary=:all: --no-index --find-links "$RUNTIME_WHEELHOUSE" -r "$RUNTIME_REQUIREMENTS"
+echo "Installing Hermes from bundled source: $RUNTIME_SOURCE ($HERMES_EDITABLE_REQUIREMENT)"
+(
+  cd "$RUNTIME_SOURCE"
+  "$VENV_PYTHON" -m pip install \
+    --only-binary=:all: \
+    --no-index \
+    --find-links "$RUNTIME_WHEELHOUSE" \
+    --no-build-isolation \
+    -e "$HERMES_EDITABLE_REQUIREMENT"
+)
 
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
