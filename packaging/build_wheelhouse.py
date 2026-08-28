@@ -18,14 +18,14 @@ PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
 
 OFFLINE_RUNTIME_REQUIREMENTS = [
     # Required by the api_server platform enabled in templates/config.yaml.
-    "aiohttp==3.14.1",
+    "aiohttp==3.14.3",
     # Required by `hermes dashboard`.
     "fastapi==0.133.1",
     # Required by FastAPI routes that accept form data.
-    "python-multipart",
+    "python-multipart==0.0.32",
     "uvicorn==0.41.0",
     # Required by dashboard/API websocket endpoints and tools.browser_dialog_tool.
-    "websockets",
+    "websockets==15.0.1",
 ]
 
 OFFLINE_REQUIRED_WHEELS = [
@@ -39,8 +39,8 @@ OFFLINE_REQUIRED_WHEELS = [
 ]
 
 BUILD_REQUIREMENTS = [
-    # Match the build backend range declared by current upstream Hermes.
-    "setuptools>=77.0,<83",
+    # Match the build backend declared by Hermes Agent v2026.8.27.
+    "setuptools==83.0.0",
     "wheel",
 ]
 

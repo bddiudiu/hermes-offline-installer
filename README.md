@@ -279,7 +279,7 @@ hermes dashboard
 
 ## Build
 
-The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.12.13`, snapshots the selected Hermes source checkout, downloads dependency wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle. Hermes itself is no longer built as a wheel because current upstream releases support source-checkout installs instead of PyPI/wheel distribution.
+The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.12.14`, snapshots the selected Hermes source checkout, downloads dependency wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle. Hermes itself is no longer built as a wheel because current upstream releases support source-checkout installs instead of PyPI/wheel distribution.
 
 Local build example:
 

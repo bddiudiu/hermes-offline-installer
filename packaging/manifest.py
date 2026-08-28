@@ -12,8 +12,8 @@ HERMES_SOURCE = os.environ.get(
     "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git",
 )
 HERMES_UPSTREAM_TAG = os.environ.get("HERMES_UPSTREAM_TAG", "").strip()
-PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.12.13")
-UV_VERSION = os.environ.get("UV_VERSION", "0.7.12")
+PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.12.14")
+UV_VERSION = os.environ.get("UV_VERSION", "0.12.7")
 
 
 def write_manifest(path: Path, *, target_platform: str, extra: dict[str, Any] | None = None) -> None:

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import urllib.request
 from urllib.error import URLError
 
 
 DEFAULT_REPO = "NousResearch/hermes-agent"
+UNPREFIXED_RELEASE_TAG = re.compile(r"\d{4}(?:\.\d+){2,}")
 
 
 def latest_release_tag(repo: str) -> str:
@@ -48,13 +50,20 @@ def build_source(repo: str, tag: str) -> str:
     return f"hermes-agent @ git+https://github.com/{repo}.git@{tag}"
 
 
+def normalize_release_tag(value: str) -> str:
+    tag = value.strip()
+    if UNPREFIXED_RELEASE_TAG.fullmatch(tag):
+        return f"v{tag}"
+    return tag
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resolve Hermes Agent source from an explicit or latest upstream tag.")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repo in owner/name form.")
     parser.add_argument("--tag", default="", help="Optional upstream tag override, e.g. v2026.7.1.")
     args = parser.parse_args()
 
-    tag = args.tag.strip() or latest_release_tag(args.repo)
+    tag = normalize_release_tag(args.tag or latest_release_tag(args.repo))
     print(f"HERMES_SOURCE={build_source(args.repo, tag)}")
     print(f"HERMES_UPSTREAM_TAG={tag}")
 
