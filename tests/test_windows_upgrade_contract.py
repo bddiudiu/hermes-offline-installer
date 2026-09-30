@@ -174,6 +174,8 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
         journal = self.function("Write-Journal")
         self.assertIn("$Stream.Flush($true)", journal)
         self.assertIn("[IO.File]::Replace", journal)
+        self.assertIn("[IO.File]::Replace($Tmp, $script:JournalPath, [NullString]::Value)", journal)
+        self.assertNotIn("[IO.File]::Replace($Tmp, $script:JournalPath, $null)", journal)
         self.assertIn("[IO.File]::Move", journal)
         acl = self.function("New-PrivateDirectory")
         self.assertIn("SetAccessRuleProtection($true, $false)", acl)

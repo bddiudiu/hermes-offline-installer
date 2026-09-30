@@ -102,7 +102,9 @@ function Write-Journal([string] $Phase) {
   $Stream = [IO.File]::Open($Tmp, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
   try { $Stream.Write($Bytes, 0, $Bytes.Length); $Stream.Flush($true) } finally { $Stream.Dispose() }
   if (Test-Path -LiteralPath $script:JournalPath) {
-    [IO.File]::Replace($Tmp, $script:JournalPath, $null)
+    # PS5.1 coerces $null to an empty string for .NET string parameters.
+    # File.Replace requires a real null (no backup filename), not an empty path.
+    [IO.File]::Replace($Tmp, $script:JournalPath, [NullString]::Value)
   } else { [IO.File]::Move($Tmp, $script:JournalPath) }
 }
 function New-PrivateDirectory([string] $Path) {
