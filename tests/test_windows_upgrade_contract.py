@@ -18,6 +18,17 @@ import build_bundle  # noqa: E402
 
 
 class UpgradePackagingTests(unittest.TestCase):
+    def test_non_ascii_powershell_sources_have_utf8_bom_for_windows_powershell(self) -> None:
+        # PowerShell 5.1 ParseFile/execution interprets BOM-less bytes as ANSI.
+        # UTF-8 Chinese can decode into smart quotes and become syntax errors.
+        for directory in ("installers", "scripts", "tests"):
+            for path in (ROOT / directory).rglob("*.ps1"):
+                with self.subTest(path=path.relative_to(ROOT)):
+                    content = path.read_bytes()
+                    if any(byte >= 128 for byte in content):
+                        self.assertTrue(content.startswith(b"\xef\xbb\xbf"),
+                                        "Non-ASCII PowerShell source requires a UTF-8 BOM")
+
     def test_checksum_inventory_hashes_final_bom_crlf_and_root_entrypoints(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             bundle = Path(temp_dir)

@@ -64,6 +64,34 @@ class OSSReleaseContractTests(unittest.TestCase):
         finally:
             os.chdir(previous)
 
+    def test_build_release_and_oss_share_one_validated_windows_workspace(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("actions/upload-artifact@", text)
+        self.assertNotIn("actions/download-artifact@", text)
+        self.assertEqual(text.count("    runs-on:"), 1)
+        self.assertIn("    runs-on: windows-latest", text)
+        self.assertIn("          fetch-depth: 0", text)
+        self.assertIn("          files: dist/*", text)
+        self.assertIn("          cp dist/* upload/", text)
+        self.assertIn("          target_commitish: ${{ github.sha }}", text)
+        self.assertIn("Packaging commit: ${{ github.sha }}", text)
+        self.assertIn("          make_latest: ${{ github.event_name == 'workflow_dispatch' && inputs.update_root_latest && 'true' || 'false' }}", text)
+        order = [text.index(name) for name in (
+            "      - name: Validate upgrade and packaging contracts",
+            "      - name: Parse Windows PowerShell 5.1 scripts",
+            "      - name: Test Windows PowerShell 5.1 upgrade functions",
+            "      - name: Build wheelhouse",
+            "      - name: Build bundle",
+            "      - name: Create release",
+            "      - name: Upload files to OSS",
+        )]
+        self.assertEqual(order, sorted(order))
+        # Publishing credentials are scoped to the upload step, never upstream build hooks.
+        before_upload, uploader = text.split("      - name: Upload files to OSS\n", 1)
+        self.assertNotIn("secrets.ALIYUN_OSS_ACCESS_KEY", before_upload)
+        self.assertIn("secrets.ALIYUN_OSS_ACCESS_KEY_ID", uploader)
+        self.assertIn("secrets.ALIYUN_OSS_ACCESS_KEY_SECRET", uploader)
+
     def test_dispatch_input_is_explicit_boolean_false_by_default(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
         declaration = text.split("      update_root_latest:\n", 1)[1].split("      hermes_extras:\n", 1)[0]
