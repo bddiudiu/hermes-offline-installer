@@ -7,6 +7,11 @@ on:
         description: "Upstream Hermes release tag override, e.g. v2026.7.1"
         required: false
         default: ""
+      update_root_latest:
+        description: "Promote this build to the root latest.json (default preserves the live update channel)"
+        required: false
+        type: boolean
+        default: false
       hermes_extras:
         description: "Hermes extras to pre-bake into the offline source install"
         required: false
@@ -48,6 +53,31 @@ jobs:
 
       - name: Install build tooling
         run: python -m pip install --upgrade pip "uv==0.12.7"
+
+      - name: Validate upgrade and packaging contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install PyYAML==6.0.3 python-dotenv==1.2.2
+          python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py scripts/upgrade_support.py
+          python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Parse Windows PowerShell 5.1 scripts
+        shell: powershell
+        run: |
+          foreach ($script in (Get-ChildItem installers,scripts -Filter *.ps1 -Recurse)) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | Format-List | Out-String | Write-Error
+              exit 1
+            }
+          }
+
+      - name: Test Windows PowerShell 5.1 upgrade functions
+        shell: powershell
+        run: .\tests\test_upgrade_functions.ps1
 
       - name: Resolve Hermes source
         shell: bash
@@ -174,6 +204,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: ${{ github.event_name == 'workflow_dispatch' && inputs.update_root_latest && 'true' || 'false' }}
           name: Hermes Agent ${{ steps.release.outputs.hermes_version }} build ${{ github.run_number }}
           body: |
             Hermes Agent version: ${{ steps.release.outputs.hermes_version }}
@@ -278,6 +310,8 @@ jobs:
 
       - name: Upload files to OSS
         shell: bash
+        env:
+          UPDATE_ROOT_LATEST: ${{ github.event_name == 'workflow_dispatch' && inputs.update_root_latest && 'true' || 'false' }}
         run: |
           set -euo pipefail
           python <<'PY'
@@ -317,19 +351,27 @@ jobs:
               if not (status and 200 <= status < 300):
                   failed.append(f"{path.name} (status={status})")
 
-          latest_key = f"{prefix}/latest.json"
-          print(f"Uploading latest.json -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{latest_key}")
-          result = bucket.put_object_from_file(
-              latest_key,
-              "upload/latest.json",
-              headers={"Content-Type": "application/json"},
-          )
-          status = getattr(result, "status", None)
-          if not (status and 200 <= status < 300):
-              failed.append(f"latest.json (status={status})")
-
+          # Never advertise a build whose artifacts did not finish uploading.
           if failed:
               raise SystemExit("Upload failed for: " + ", ".join(failed))
+
+          # Every build has a version-scoped metadata document for acceptance testing.
+          latest_keys = [f"{path_prefix}/latest.json"]
+          if os.environ.get("UPDATE_ROOT_LATEST") == "true":
+              latest_keys.append(f"{prefix}/latest.json")
+          for latest_key in latest_keys:
+              print(f"Uploading latest.json -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{latest_key}")
+              result = bucket.put_object_from_file(
+                  latest_key,
+                  "upload/latest.json",
+                  headers={"Content-Type": "application/json"},
+              )
+              status = getattr(result, "status", None)
+              if not (status and 200 <= status < 300):
+                  # In particular, never promote root metadata if version metadata failed.
+                  raise SystemExit(f"Upload failed: {latest_key} (status={status})")
+          if os.environ.get("UPDATE_ROOT_LATEST") != "true":
+              print("Root latest.json preserved; validate the version-scoped build before promotion")
 
           print("OSS upload complete")
           PY

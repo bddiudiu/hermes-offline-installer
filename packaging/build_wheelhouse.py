@@ -39,7 +39,7 @@ OFFLINE_REQUIRED_WHEELS = [
 ]
 
 BUILD_REQUIREMENTS = [
-    # Match the build backend declared by Hermes Agent v2026.8.27.
+    # Match the build backend declared by Hermes Agent v2026.9.24.
     "setuptools==83.0.0",
     "wheel",
 ]
@@ -56,7 +56,6 @@ HERMES_RESOURCE_SENTINELS = [
     "skills/apple/imessage/SKILL.md",
     "skills/autonomous-ai-agents/codex/SKILL.md",
     "skills/cn-mirrors/SKILL.md",
-    "skills/software-development/plan/SKILL.md",
     "optional-skills/productivity/memento-flashcards/SKILL.md",
     "optional-mcps/linear/manifest.yaml",
     "locales/en.yaml",

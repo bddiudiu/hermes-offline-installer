@@ -9,7 +9,8 @@ Hermes Offline Installer 会把 Hermes Agent、portable Python runtime、`uv`、
 ## 功能
 
 - 打包 Hermes Agent、portable Python runtime、`uv`、Python 依赖和运行时资源。
-- 支持安装或升级 Hermes，保留已有的 `.env`，并在不覆盖其他配置的情况下确保 `config.yaml` 默认选择 `zhan_ai` 模型渠道。
+- 安装 Hermes 时保留已有 `.env` 和其他无关配置，并配置 `zhan_ai` 模型默认值。
+- 提供事务式 Windows `upgrade.cmd` 升级流程，保留已有模型选择，支持完整 home 回滚与中断恢复。
 - 提供 Windows 启动、停止、卸载辅助脚本和 PATH 命令。
 - 提供 Windows 修复入口 `repair.cmd`，可用当前解压包重建 runtime、venv 和 shims。
 - 支持通过 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME` 自定义安装位置。
@@ -93,7 +94,7 @@ Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 
 
 其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当检测到旧版本写入的 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline` 默认变量时，安装器会把它们视为 legacy 默认值并改用新的产品目录，同时清理旧 `%USERPROFILE%\.hermes-offline\bin` 的 PATH 入口。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
 
-如需升级已有离线安装，解压新版 zip 后再次运行 `install.cmd`。安装器会重建 runtime 和 venv，更新 shims，保留已有 `.env`，并只对 `config.yaml` 中的默认模型渠道和 `zhan_ai` provider 做最小修正。从旧版默认目录 `%USERPROFILE%\.hermes` 迁移到 `C:\ProgramData\SSC\Hermes` 时，如果新目录缺少 `config.yaml` 或 `.env`，会先从旧目录复制。
+如需升级已有 Windows 离线安装，将新版 ZIP 解压到独立目录，在该目录先运行 `upgrade.cmd "C:\old\install" -WhatIf`，检查计划后再运行 `upgrade.cmd "C:\old\install"`。路径应为包含 `runtime` 和 `bin` 的旧 `HERMES_OFFLINE_HOME`。专用升级流程保留已有模型列表、provider 映射、默认模型和 `.env`，备份完整 Hermes home，并支持失败回滚与中断事务恢复。升级前先停止外部客户端和 supervisor，实际停止后才使用 `-SupervisorStopped`。`-HermesHome`、`-KeepStopped`、`-Recover`、权限要求与验证范围详见 [Windows 升级指南](docs/upgrade-windows.zh-CN.md)。首次安装继续使用 `install.cmd`。
 
 如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 `%HERMES_OFFLINE_HOME%\bin`，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
 
@@ -329,6 +330,10 @@ wheelhouse manifest 会记录实际 `hermes_version`、`hermes_install_mode`、`
 - Dashboard TUI `tui_dist`
 
 安装器会把源码快照复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-agent`，在完全离线的前提下以 editable 模式安装到包内 venv；同时把 runtime resources 复制到 `$HERMES_OFFLINE_HOME/runtime/hermes-resources`，并把内置 Agent Skills 同步到 `$HERMES_HOME/skills`。Dashboard 的 Agent Skills 面板会读取这个目录。
+
+### OSS 发布推广
+
+发布工作流的 `update_root_latest` 默认是 `false`。先上传安装包等产物，全部成功后才写入 `<prefix>/<HermesVersion>-<runNumber>/latest.json`（`prefix` 默认为 `hermes`）。根目录 `<prefix>/latest.json` 保持不变，只有手动运行时显式启用 `update_root_latest` 才会更新。推广前应完成 Windows 真实升级与回滚验收；安装包或版本元数据上传失败会阻止根目录推广。详见 [升级与发布验收指南](docs/upgrade-windows.zh-CN.md)。
 
 ## 安装位置
 

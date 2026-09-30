@@ -9,7 +9,8 @@ The project builds redistributable one-click offline installers for Windows, mac
 ## Features
 
 - Bundles Hermes Agent, portable Python runtime, `uv`, Python dependencies, and runtime resources.
-- Installs or upgrades Hermes, preserving `.env` and ensuring `config.yaml` defaults to the `zhan_ai` model provider without overwriting unrelated settings.
+- Installs Hermes with `zhan_ai` model defaults while preserving `.env` and unrelated settings.
+- Provides a transactional Windows `upgrade.cmd` flow that preserves existing model choices and supports full-home rollback and interrupted-upgrade recovery.
 - Provides Windows launch, shutdown, uninstall helpers and PATH commands.
 - Provides a Windows `repair.cmd` helper that rebuilds the runtime, venv, and shims from the extracted bundle.
 - Supports configurable install locations through `HERMES_HOME` and `HERMES_OFFLINE_HOME`.
@@ -93,7 +94,7 @@ Complete installer environment variable list:
 
 End users only need to set `HERMES_HOME` and `HERMES_OFFLINE_HOME` before running a custom-location install. Windows writes all 12 variables above to the current user's environment and appends `%HERMES_OFFLINE_HOME%\bin` to the current user's `Path`; when it detects old `%USERPROFILE%\.hermes` or `%USERPROFILE%\.hermes-offline` defaults, it treats them as legacy values, migrates to the new product directories, and removes the old `%USERPROFILE%\.hermes-offline\bin` PATH entry. Unix does not modify shell startup files; the generated `~/.local/bin/hermes` shim exports the Hermes variables.
 
-To upgrade an existing offline installation, extract the new zip and run `install.cmd` again. The installer rebuilds the runtime and venv, updates shims, preserves `.env`, and only patches the default model provider plus the `zhan_ai` provider block in `config.yaml`. When moving from the old `%USERPROFILE%\.hermes` default to `C:\ProgramData\SSC\Hermes`, missing `config.yaml` and `.env` files are copied from the old home first.
+To upgrade an existing Windows offline installation, extract the new ZIP into a separate directory and run `upgrade.cmd "C:\old\install" -WhatIf` there, then run `upgrade.cmd "C:\old\install"` after reviewing the plan. The path is the existing `HERMES_OFFLINE_HOME` containing `runtime` and `bin`. The dedicated upgrade flow preserves existing model lists, provider mappings, default model and `.env`, backs up the complete Hermes home, and supports rollback and interrupted-transaction recovery. Stop external clients/supervisors before upgrading; use `-SupervisorStopped` only after doing so. See the [Windows upgrade guide (简体中文)](docs/upgrade-windows.zh-CN.md) for `-HermesHome`, `-KeepStopped`, `-Recover`, permissions and verification limits. `install.cmd` remains the fresh-install entrypoint.
 
 If installation reports that an old runtime or legacy `hermes.exe` shim is in use, close running Hermes or ClawPanel processes and rerun the installer. The Windows offline installer writes a `hermes.exe` wrapper into `%HERMES_OFFLINE_HOME%\bin` for callers that only recognize `.exe` commands. The wrapper forwards to `hermes.cmd` in the same directory, so launches still use the `HERMES_PYTHON` and bundled resource environment variables set by `hermes.cmd`.
 
@@ -329,6 +330,10 @@ The offline wheelhouse includes dependencies needed by `hermes dashboard`, inclu
 - Dashboard TUI `tui_dist`
 
 Installers copy the source snapshot to `$HERMES_OFFLINE_HOME/runtime/hermes-agent`, install it into the bundled venv in editable mode without network access, copy runtime resources to `$HERMES_OFFLINE_HOME/runtime/hermes-resources`, and sync bundled Agent Skills to `$HERMES_HOME/skills`. Dashboard reads the Agent Skills panel from that directory.
+
+### OSS release promotion
+
+The release workflow defaults `update_root_latest` to `false`. Artifacts upload first; successful builds then write version-scoped metadata at `<prefix>/<HermesVersion>-<runNumber>/latest.json` (`prefix` defaults to `hermes`). The root `<prefix>/latest.json` stays unchanged unless a manual workflow run explicitly enables `update_root_latest`. Complete Windows upgrade and rollback acceptance checks before promoting a build. Artifact or version-metadata upload failures block root promotion. See the [upgrade and release acceptance guide (简体中文)](docs/upgrade-windows.zh-CN.md).
 
 ## Install Layout
 

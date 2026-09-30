@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -75,6 +76,28 @@ def write_windows_powershell_scripts_with_bom(bundle: Path) -> None:
         for script in script_root.rglob("*.ps1"):
             content = script.read_text(encoding="utf-8-sig")
             script.write_text(content, encoding="utf-8-sig", newline="\r\n")
+
+
+def write_upgrade_manifest(bundle: Path) -> None:
+    """Hash the final packaged bytes (including BOM/CRLF conversion and root shims).
+
+    This inventory detects incomplete/tampered extraction, not publisher identity.
+    Users must obtain and verify the release ZIP from their trusted publisher.
+    """
+    files = {}
+    for path in sorted(bundle.rglob("*")):
+        if path.is_symlink():
+            raise SystemExit(f"Bundle contains a symlink: {path}")
+        if path.is_file() and path != bundle / "upgrade-manifest.json":
+            h = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    h.update(chunk)
+            files[path.relative_to(bundle).as_posix()] = h.hexdigest()
+    (bundle / "upgrade-manifest.json").write_text(
+        json.dumps({"schema": 1, "algorithm": "sha256", "files": files}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def prepare_uv(platform_name: str, bundle: Path) -> None:
@@ -285,6 +308,9 @@ def main() -> None:
         shutil.copy2(bundle / "installers" / "repair_windows.cmd", bundle / "repair.cmd")
         shutil.copy2(bundle / "installers" / "shutdown_windows.cmd", bundle / "shutdown.cmd")
         shutil.copy2(bundle / "installers" / "uninstall_windows.cmd", bundle / "uninstall.cmd")
+        shutil.copy2(bundle / "installers" / "upgrade.cmd", bundle / "upgrade.cmd")
+        shutil.copy2(bundle / "installers" / "upgrade.ps1", bundle / "upgrade.ps1")
+        shutil.copy2(ROOT / "docs" / "upgrade-windows.zh-CN.md", bundle / "UPGRADE.zh-CN.md")
 
     prepare_uv(args.platform, bundle)
     prepare_python_runtime(bundle)
@@ -301,6 +327,9 @@ def main() -> None:
             "hermes_source_commit": wheelhouse_manifest.get("hermes_source_commit"),
         },
     )
+
+    if args.platform.startswith("win"):
+        write_upgrade_manifest(bundle)
 
     archive = archive_bundle(args.platform, bundle, args.output.resolve())
     validate_archive_python_stdlib(args.platform, archive)
