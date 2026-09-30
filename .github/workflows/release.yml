@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install PyYAML==6.0.3 python-dotenv==1.2.2
-          python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py scripts/upgrade_support.py
+          python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py scripts/upgrade_support.py scripts/upload_oss.py
           python -m unittest discover -s tests -p "test_*.py"
 
       - name: Parse Windows PowerShell 5.1 scripts
@@ -231,7 +231,9 @@ jobs:
 
       - name: Upload files to OSS
         shell: bash
+        timeout-minutes: 20
         env:
+          OSS_VERSION_PREFIX: ${{ steps.meta.outputs.path_prefix }}
           UPDATE_ROOT_LATEST: ${{ github.event_name == 'workflow_dispatch' && inputs.update_root_latest && 'true' || 'false' }}
           ALIYUN_OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
@@ -240,64 +242,4 @@ jobs:
           ALIYUN_OSS_PREFIX: ${{ vars.ALIYUN_OSS_PREFIX || 'hermes' }}
         run: |
           set -euo pipefail
-          python <<'PY'
-          import os
-          from pathlib import Path
-
-          import oss2
-
-          required = [
-              "ALIYUN_OSS_BUCKET",
-              "ALIYUN_OSS_ENDPOINT",
-              "ALIYUN_OSS_ACCESS_KEY_ID",
-              "ALIYUN_OSS_ACCESS_KEY_SECRET",
-          ]
-          missing = [name for name in required if not os.environ.get(name)]
-          if missing:
-              raise SystemExit(f"Missing OSS environment variables: {', '.join(missing)}")
-
-          endpoint = os.environ["ALIYUN_OSS_ENDPOINT"].strip()
-          if "://" not in endpoint:
-              endpoint = f"https://{endpoint}"
-
-          prefix = os.environ.get("ALIYUN_OSS_PREFIX", "hermes").strip("/")
-          path_prefix = "${{ steps.meta.outputs.path_prefix }}"
-
-          auth = oss2.Auth(os.environ["ALIYUN_OSS_ACCESS_KEY_ID"], os.environ["ALIYUN_OSS_ACCESS_KEY_SECRET"])
-          bucket = oss2.Bucket(auth, endpoint, os.environ["ALIYUN_OSS_BUCKET"])
-
-          failed = []
-          for path in sorted(Path("upload").iterdir()):
-              if not path.is_file() or path.name == "latest.json":
-                  continue
-              object_key = f"{path_prefix}/{path.name}"
-              print(f"Uploading {path.name} -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{object_key}")
-              result = bucket.put_object_from_file(object_key, str(path))
-              status = getattr(result, "status", None)
-              if not (status and 200 <= status < 300):
-                  failed.append(f"{path.name} (status={status})")
-
-          # Never advertise a build whose artifacts did not finish uploading.
-          if failed:
-              raise SystemExit("Upload failed for: " + ", ".join(failed))
-
-          # Every build has a version-scoped metadata document for acceptance testing.
-          latest_keys = [f"{path_prefix}/latest.json"]
-          if os.environ.get("UPDATE_ROOT_LATEST") == "true":
-              latest_keys.append(f"{prefix}/latest.json")
-          for latest_key in latest_keys:
-              print(f"Uploading latest.json -> oss://{os.environ['ALIYUN_OSS_BUCKET']}/{latest_key}")
-              result = bucket.put_object_from_file(
-                  latest_key,
-                  "upload/latest.json",
-                  headers={"Content-Type": "application/json"},
-              )
-              status = getattr(result, "status", None)
-              if not (status and 200 <= status < 300):
-                  # In particular, never promote root metadata if version metadata failed.
-                  raise SystemExit(f"Upload failed: {latest_key} (status={status})")
-          if os.environ.get("UPDATE_ROOT_LATEST") != "true":
-              print("Root latest.json preserved; validate the version-scoped build before promotion")
-
-          print("OSS upload complete")
-          PY
+          python -u scripts/upload_oss.py --directory upload --path-prefix "$OSS_VERSION_PREFIX"
