@@ -351,8 +351,18 @@ def snapshot(backup: Path, check: bool = False) -> dict:
 
 
 def compare_trees(source: Path, copy: Path) -> dict:
-    if tree_inventory(source) != tree_inventory(copy):
-        raise UpgradeError("Cold backup/restore verification failed: file contents differ")
+    original = tree_inventory(source)
+    copied = tree_inventory(copy)
+    if original != copied:
+        # Paths and categories only: never expose config values or file contents.
+        differences = {
+            "missing_from_copy": sorted(original.keys() - copied.keys())[:3],
+            "extra_in_copy": sorted(copied.keys() - original.keys())[:3],
+            "changed": sorted(path for path in original.keys() & copied.keys()
+                              if original[path] != copied[path])[:3],
+        }
+        raise UpgradeError("Cold backup/restore verification failed: file contents differ; "
+                           + json.dumps(differences, ensure_ascii=True))
     return {"identical": True}
 
 

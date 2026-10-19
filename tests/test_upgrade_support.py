@@ -491,6 +491,19 @@ class ColdTreeVerificationTests(unittest.TestCase):
             with self.subTest(source=source, target=target), self.assertRaises(upgrade.UpgradeError):
                 upgrade.compare_trees(source, target)
 
+    def test_difference_diagnostics_report_paths_without_credential_contents(self) -> None:
+        (self.backup / ".env").write_text("PRIVATE_KEY=never-print-this-value")
+        (self.backup / "unexpected.txt").write_text("never-print-this-content")
+        (self.backup / "state.db-wal").unlink()
+        with self.assertRaises(upgrade.UpgradeError) as caught:
+            upgrade.compare_trees(self.home, self.backup)
+        message = str(caught.exception)
+        self.assertIn('"changed": [".env"]', message)
+        self.assertIn('"extra_in_copy": ["unexpected.txt"]', message)
+        self.assertIn('"missing_from_copy": ["state.db-wal"]', message)
+        self.assertNotIn("never-print", message)
+        self.assertNotIn("EXISTING_KEY", message)
+
     def test_preserves_empty_directories(self) -> None:
         (self.backup / "profiles/empty-directory").rmdir()
         with self.assertRaises(upgrade.UpgradeError):

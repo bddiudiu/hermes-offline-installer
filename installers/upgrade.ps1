@@ -534,7 +534,12 @@ namespace HermesUpgrade { public static class Native {
   $script:Journal.homeBackupComplete = $true
   Write-Journal 'backed-up'
   # Even read-oriented upstream imports run only after the restore point is durable.
+  # The old config loader can seed SOUL.md/directories and config-history files.
+  # Capture its resolved endpoint, then restore the exact cold home before any
+  # runtime replacement. Keep the complete byte-for-byte verification below.
   $OriginalEndpoint = Invoke-Helper $OldPython @('endpoint', '--home', $script:HermesDataHome)
+  Assert-Quiescent
+  Copy-Tree (Join-Path $Backup 'home') $script:HermesDataHome -Mirror
   Invoke-Helper $OldPython @('compare', '--home', $script:HermesDataHome, '--backup', (Join-Path $Backup 'home')) | Out-Null
   # Intent is flushed BEFORE replacement; the verified private snapshot is complete.
   $script:Journal.runtimeMoved = $true

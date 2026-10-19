@@ -160,6 +160,7 @@ try {
   $Upgrade = Join-Path $NewBundle 'installers\upgrade.ps1'
   & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped -WhatIf
   if ($LASTEXITCODE -ne 0) { throw 'Legacy upgrade WhatIf failed.' }
+  Write-Host 'Legacy upgrade WhatIf passed; starting the occupied-port rollback exercise.'
 
   # Occupy the API port with an unrelated process: the upgrade must roll back
   # after replacing its runtime, then succeed after that listener is removed.
@@ -184,6 +185,7 @@ try {
       (Get-FileHash (Join-Path $Old.Data '.env') -Algorithm SHA256).Hash -ne $EnvBefore) { throw 'Rollback changed preserved configuration.' }
   Write-Host 'Real legacy runtime and home rollback passed.'
 
+  Write-Host 'Starting the successful legacy-to-new upgrade exercise.'
   & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped
   if ($LASTEXITCODE -ne 0 -or (Read-Journal $Old).phase -ne 'committed') { throw 'Legacy-to-new offline upgrade failed.' }
   Verify-Runtime $Old $Version
