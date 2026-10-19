@@ -80,6 +80,19 @@ function Stop-SmokeProcess($Process) {
   }
 }
 
+function Remove-SmokeTree([string] $Path) {
+  # Windows can release mapped DLLs shortly after the process tree exits.
+  $Until = [DateTime]::UtcNow.AddSeconds(15)
+  while (Test-Path -LiteralPath $Path) {
+    try {
+      Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+    } catch {
+      if ([DateTime]::UtcNow -ge $Until) { throw }
+      Start-Sleep -Milliseconds 250
+    }
+  }
+}
+
 function Read-Journal($Context) {
   return (Get-Content -LiteralPath (Join-Path $Context.Root '.hermes-upgrade.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
 }
@@ -102,9 +115,14 @@ try {
     Get-Content (Join-Path $Work 'gateway.stderr.log') -Tail 40
     throw 'Fresh runtime authenticated readiness failed.'
   }
-  Stop-SmokeProcess $Gateway
+  # Ask the Windows gateway to drain through its planned-stop marker before
+  # falling back to terminating this fixture's process tree.
+  & $Fresh.Python -m hermes_cli.main gateway stop
+  if ($LASTEXITCODE -ne 0) { throw 'Fresh gateway stop failed.' }
+  if (-not $Gateway.WaitForExit(15000)) { Stop-SmokeProcess $Gateway }
   $Gateway = $null
-  Remove-Item -LiteralPath $Fresh.Root, $Fresh.Data -Recurse -Force
+  Remove-SmokeTree $Fresh.Root
+  Remove-SmokeTree $Fresh.Data
   Write-Host 'Fresh portable install, configuration and authenticated readiness passed.'
 
   # The previous published installer is a real upgrade fixture, verified before extraction.
