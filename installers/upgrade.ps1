@@ -188,9 +188,11 @@ function Test-CommandOwnsPath([string] $Line, [string] $Root) {
   foreach ($Token in (Split-Command $Line)) {
     $Candidate = $Token
     if ($Token -match '^--[\w-]+=(.+)$') { $Candidate = $Matches[1] }
-    if ([IO.Path]::IsPathRooted($Candidate)) {
-      try { if (Test-Within $Candidate $Root) { return $true } } catch {}
-    }
+    # Command arguments can contain quoted code/XML rather than filesystem paths.
+    # .NET Framework IsPathRooted itself throws for those characters on PS5.1.
+    try {
+      if ([IO.Path]::IsPathRooted($Candidate) -and (Test-Within $Candidate $Root)) { return $true }
+    } catch [ArgumentException] {}
   }
   return $false
 }
@@ -212,6 +214,8 @@ function Assert-NoSupervisors([object[]] $Inventory, [object[]] $Owned) {
   }
   foreach ($Task in @(Get-ScheduledTask -ErrorAction Stop)) {
     foreach ($Action in $Task.Actions) {
+      # COM-handler task actions have ClassId/Data, not an executable command.
+      if (-not $Action.PSObject.Properties['Execute']) { continue }
       $Command = (Quote-Argument ([string]$Action.Execute)) + ' ' + ([string]$Action.Arguments)
       if ((Test-CommandOwnsPath $Command $script:InstallRoot) -or (Test-CommandOwnsPath $Command $script:HermesDataHome)) {
         if ([string]$Task.State -ne 'Disabled') { throw 'A scheduled task owns this installation. Disable/stop it before upgrading.' }
@@ -619,7 +623,7 @@ namespace HermesUpgrade { public static class Native {
   if ($KeepStopped -or @($Restart).Count -eq 0) { Write-Host 'Hermes is stopped. Start it with the original launcher when ready.' }
   $script:ExitCode = 0
 } catch {
-  Write-Warning $_.Exception.Message
+  Write-Warning ('Upgrade failed at line {0}: {1}' -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message)
   if ($script:Journal -and $script:Lock -and $script:Journal.phase -notin @('committed', 'rolled-back')) {
     try {
       if ($script:Journal.runtimeMoved -or $script:Journal.homeBackupComplete) { Restore-Transaction; $script:ExitCode = 10; Write-Warning 'Upgrade failed; original runtime and home restored. Backups retained.' }

@@ -15,7 +15,7 @@ $SelectedFunctions = @(
   'Full-Path', 'Test-Within', 'Assert-Separate', 'Assert-NoLinks',
   'Quote-Argument', 'Split-Command', 'Get-RestartSpecs', 'Assert-RestartSpec',
   'Write-Journal', 'New-PrivateDirectory', 'Copy-Tree',
-  'Get-FileDigest', 'Assert-BundleIntegrity'
+  'Get-FileDigest', 'Assert-BundleIntegrity', 'Test-CommandOwnsPath', 'Assert-NoSupervisors'
 )
 $Definitions = @($Ast.FindAll({ param($Node) $Node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))
 foreach ($Name in $SelectedFunctions) {
@@ -106,6 +106,26 @@ try {
   for ($Index = 0; $Index -lt $Arguments.Count; $Index++) {
     Assert-Condition ($Parsed[$Index + 1] -ceq $Arguments[$Index]) "Windows quoting round trip argument $Index"
   }
+
+  $Unrelated = (Quote-Argument 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe') + ' -Command ' + (Quote-Argument 'Write-Output "unrelated script argument"')
+  Assert-Condition (-not (Test-CommandOwnsPath $Unrelated $script:InstallRoot)) 'quoted non-path command arguments do not break ownership inspection'
+  $Mixed = $Unrelated + ' ' + (Quote-Argument ('--home=' + $script:InstallRoot))
+  Assert-Condition (Test-CommandOwnsPath $Mixed $script:InstallRoot) 'owned path is still detected after a non-path argument'
+  Assert-Condition (-not (Test-CommandOwnsPath ($Unrelated + ' ' + (Quote-Argument ($script:InstallRoot + '-other'))) $script:InstallRoot)) 'unrelated sibling path does not claim runtime ownership'
+  function Test-SupervisorActionFixtures {
+    # Local mocks keep this check isolated from real services and scheduled tasks.
+    function Get-CimInstance { [CmdletBinding()] param([string] $ClassName) }
+    function Get-ScheduledTask { [CmdletBinding()] param() return $FixtureTasks }
+    $FixtureTasks = @([pscustomobject]@{ State = 'Ready'; Actions = @(
+      [pscustomobject]@{ ClassId = '{00000000-0000-0000-0000-000000000000}'; Data = '' },
+      [pscustomobject]@{ Execute = 'C:\Windows\System32\cmd.exe'; Arguments = '/c echo fixture' }
+    ) })
+    Assert-NoSupervisors @() @()
+    $script:Passed++
+    $FixtureTasks = @([pscustomobject]@{ State = 'Ready'; Actions = @([pscustomobject]@{ Execute = (Join-Path $script:InstallRoot 'bin\hermes.cmd'); Arguments = 'gateway run' }) })
+    Assert-Throws { Assert-NoSupervisors @() @() } 'runtime-owned scheduled task still blocks upgrade'
+  }
+  Test-SupervisorActionFixtures
 
   $Python = Join-Path $script:Runtime 'venv\Scripts\python.exe'
   $Hermes = Join-Path $script:Runtime 'venv\Scripts\hermes.exe'
