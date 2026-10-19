@@ -18,6 +18,11 @@ import sys
 import time
 import urllib.request
 
+if __name__ == "__main__":
+    # This helper also runs under the OLD interpreter during read-only preflight.
+    # A new .pyc in the extracted ZIP would invalidate its complete inventory.
+    sys.dont_write_bytecode = True
+
 from hermes_version import source_identity, stable_version, VersionError
 
 class UpgradeError(RuntimeError):

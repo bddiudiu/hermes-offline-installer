@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +86,22 @@ class ReleaseIdentityTests(unittest.TestCase):
         with mock.patch.object(build_wheelhouse.sys, "version_info", (3, 12, 14)):
             with self.assertRaisesRegex(SystemExit, "markers"):
                 build_wheelhouse.validate_build_environment("win-x64")
+
+    def test_preflight_helper_does_not_write_into_the_extracted_bundle(self):
+        helper_dir = self.root / "scripts"
+        helper_dir.mkdir()
+        for name in ("upgrade_support.py", "hermes_version.py"):
+            shutil.copy2(ROOT / "scripts" / name, helper_dir / name)
+        before = {p.name: p.read_bytes() for p in helper_dir.iterdir()}
+        env = os.environ.copy()
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        env.pop("PYTHONPYCACHEPREFIX", None)
+        result = subprocess.run([sys.executable, str(helper_dir / "upgrade_support.py"),
+                                 "bundle", "--bundle", str(self.root / "missing"), "--version", "0.21.5"],
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("error", json.loads(result.stdout))
+        self.assertEqual({p.name: p.read_bytes() for p in helper_dir.iterdir()}, before)
 
     def test_runtime_checks_stamp_metadata_and_upstream_identity_together(self):
         self.write_stamp()

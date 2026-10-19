@@ -322,7 +322,8 @@ def main() -> None:
     shutil.move(str(source_in_wheelhouse), str(bundle / "hermes-agent"))
     copytree(ROOT / "installers", bundle / "installers")
     copy_install_templates(bundle)
-    copytree(ROOT / "scripts", bundle / "scripts")
+    shutil.copytree(ROOT / "scripts", bundle / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
     for script in [bundle / "installers" / "install_unix.sh", bundle / "scripts" / "verify_unix.sh"]:
         if script.exists():
