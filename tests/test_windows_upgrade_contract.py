@@ -113,11 +113,19 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
 
     def test_preflight_rejects_nested_paths_and_reparse_points(self) -> None:
         self.assertIn("Assert-Separate $script:Source $script:InstallRoot", self.main)
-        self.assertIn("Assert-Separate $script:Home $script:InstallRoot", self.main)
-        self.assertIn("Assert-Separate $script:Home $script:Source", self.main)
-        for path in ("$script:Source", "$script:InstallRoot", "$script:Home"):
+        self.assertIn("Assert-Separate $script:HermesDataHome $script:InstallRoot", self.main)
+        self.assertIn("Assert-Separate $script:HermesDataHome $script:Source", self.main)
+        for path in ("$script:Source", "$script:InstallRoot", "$script:HermesDataHome"):
             self.assertIn(f"Assert-NoLinks {path}", self.main)
         self.assertIn("[IO.FileAttributes]::ReparsePoint", self.function("Assert-NoLinks"))
+
+    def test_upgrade_does_not_assign_powershell_readonly_automatic_variables(self) -> None:
+        # PowerShell identifiers are case insensitive, including scoped names.
+        # A script-scoped $Home still collides with the built-in constant $HOME.
+        self.assertNotRegex(
+            self.ps,
+            r"(?i)\$(?:(?:script|global|local|private):)?(?:home|host|pid)\b\s*=",
+        )
 
     def test_existing_launcher_is_parsed_never_executed_or_replaced_by_install(self) -> None:
         self.assertIn("Get-Content -LiteralPath $OldShim", self.main)
@@ -142,7 +150,7 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
     def test_cold_snapshots_and_hashes_precede_runtime_destruction(self) -> None:
         normal = self.main.split("Write-Journal 'prepared'", 1)[1]
         stop = normal.index("Stop-Owned")
-        snapshot = normal.index("Copy-Tree $script:Home")
+        snapshot = normal.index("Copy-Tree $script:HermesDataHome")
         comparison = normal.index("@('compare', '--home', $script:Runtime")
         journal = normal.index("Write-Journal 'replacing-runtime'")
         destructive = normal.index("Remove-Item -LiteralPath $script:Runtime -Recurse -Force")
@@ -184,9 +192,9 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
 
     def test_recovery_mirrors_full_home_and_bin_and_verifies_restored_bytes(self) -> None:
         restore = self.function("Restore-Transaction")
-        self.assertIn("Copy-Tree (Join-Path $script:Journal.backup 'home') $script:Home -Mirror", restore)
+        self.assertIn("Copy-Tree (Join-Path $script:Journal.backup 'home') $script:HermesDataHome -Mirror", restore)
         self.assertIn("Copy-Tree (Join-Path $script:Journal.backup 'bin') (Join-Path $script:InstallRoot 'bin') -Mirror", restore)
-        self.assertIn("@('compare', '--home', $script:Home", restore)
+        self.assertIn("@('compare', '--home', $script:HermesDataHome", restore)
         self.assertIn("@('compare', '--home', $script:Runtime", restore)
         self.assertLess(restore.index("Stop-Owned"), restore.index("Copy-Tree"))
         self.assertLess(restore.index("@('compare'"), restore.index("Write-Journal 'restored'"))
@@ -205,8 +213,8 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
 
     def test_recovery_accepts_missing_live_home_and_uses_retained_original_launcher(self) -> None:
         self.assertIn("if ($RecoveryPrior.homeBackupComplete) { $OldShim = Join-Path $RecoveryPrior.backup 'bin\\hermes.cmd' }", self.main)
-        self.assertIn("if (-not $Recover -and -not (Test-Path -LiteralPath (Join-Path $script:Home 'config.yaml')))", self.main)
-        self.assertIn("Assert-NoLinks $script:Home -AllowMissing:$Recover", self.main)
+        self.assertIn("if (-not $Recover -and -not (Test-Path -LiteralPath (Join-Path $script:HermesDataHome 'config.yaml')))", self.main)
+        self.assertIn("Assert-NoLinks $script:HermesDataHome -AllowMissing:$Recover", self.main)
         restore = self.function("Restore-Transaction")
         self.assertIn("@('snapshot-check', '--backup', $script:Journal.backup)", restore)
         self.assertLess(restore.index("@('snapshot-check'"), restore.index("Copy-Tree"))
@@ -223,7 +231,7 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
     def test_rollback_resets_profile_and_python_bootstrap_environment_before_restore(self) -> None:
         restore = self.function("Restore-Transaction")
         check = restore.index("@('snapshot-check'")
-        for setting in ("Set-ProcessEnv 'HERMES_HOME' $script:Home",
+        for setting in ("Set-ProcessEnv 'HERMES_HOME' $script:HermesDataHome",
                         "Set-ProcessEnv 'HERMES_OFFLINE_HOME' $script:InstallRoot",
                         "Set-ProcessEnv 'PYTHONHOME' $null", "Set-ProcessEnv 'PYTHONPATH' $null"):
             self.assertLess(restore.index(setting), check)

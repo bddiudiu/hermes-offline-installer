@@ -213,7 +213,7 @@ function Assert-NoSupervisors([object[]] $Inventory, [object[]] $Owned) {
   foreach ($Task in @(Get-ScheduledTask -ErrorAction Stop)) {
     foreach ($Action in $Task.Actions) {
       $Command = (Quote-Argument ([string]$Action.Execute)) + ' ' + ([string]$Action.Arguments)
-      if ((Test-CommandOwnsPath $Command $script:InstallRoot) -or (Test-CommandOwnsPath $Command $script:Home)) {
+      if ((Test-CommandOwnsPath $Command $script:InstallRoot) -or (Test-CommandOwnsPath $Command $script:HermesDataHome)) {
         if ([string]$Task.State -ne 'Disabled') { throw 'A scheduled task owns this installation. Disable/stop it before upgrading.' }
         if (-not $SupervisorStopped) { throw 'A disabled scheduled task was detected; use -SupervisorStopped after checking its owner.' }
       }
@@ -225,7 +225,7 @@ function Assert-NoSupervisors([object[]] $Inventory, [object[]] $Owned) {
     # can respawn Hermes and cannot be treated as harmless just by executable name.
     if ($Ancestors.ContainsKey([int]$P.ProcessId)) { continue }
     if ($P.Name -match '^(cmd|powershell|pwsh)\.exe$' -and (Test-CommandOwnsPath $P.CommandLine $script:InstallRoot)) { throw 'Another shell references this installation; close its launcher/supervisor first.' }
-    if ((Test-CommandOwnsPath $P.CommandLine $script:Runtime) -or (Test-CommandOwnsPath $P.CommandLine $script:Home)) {
+    if ((Test-CommandOwnsPath $P.CommandLine $script:Runtime) -or (Test-CommandOwnsPath $P.CommandLine $script:HermesDataHome)) {
       throw "External process $($P.ProcessId) references this runtime/home. Stop its owning client first."
     }
   }
@@ -311,7 +311,7 @@ function Start-Spec([object] $Spec) {
   return $P
 }
 function Restore-Transaction {
-  Set-ProcessEnv 'HERMES_HOME' $script:Home
+  Set-ProcessEnv 'HERMES_HOME' $script:HermesDataHome
   Set-ProcessEnv 'HERMES_OFFLINE_HOME' $script:InstallRoot
   Set-ProcessEnv 'HERMES_PYTHON' (Join-Path $script:Runtime 'venv\Scripts\python.exe')
   Set-ProcessEnv 'PYTHONHOME' $null
@@ -335,18 +335,18 @@ function Restore-Transaction {
     Copy-Tree (Join-Path $script:Journal.backup 'runtime') $script:Runtime -Mirror
   }
   if ($script:Journal.homeBackupComplete) {
-    if (-not (Test-Path -LiteralPath $script:Home)) {
+    if (-not (Test-Path -LiteralPath $script:HermesDataHome)) {
       $HomeSecurity = New-Object Security.AccessControl.DirectorySecurity
       $HomeSecurity.SetSecurityDescriptorSddlForm($script:Journal.homeSddl)
-      [IO.Directory]::CreateDirectory($script:Home, $HomeSecurity) | Out-Null
+      [IO.Directory]::CreateDirectory($script:HermesDataHome, $HomeSecurity) | Out-Null
     }
-    Copy-Tree (Join-Path $script:Journal.backup 'home') $script:Home -Mirror
+    Copy-Tree (Join-Path $script:Journal.backup 'home') $script:HermesDataHome -Mirror
     Copy-Tree (Join-Path $script:Journal.backup 'bin') (Join-Path $script:InstallRoot 'bin') -Mirror
   }
   $RestoredPython = Join-Path $script:Runtime 'venv\Scripts\python.exe'
   if (-not (Test-Path -LiteralPath $RestoredPython)) { throw 'Restored runtime is incomplete.' }
   if ($script:Journal.homeBackupComplete) {
-    Invoke-Helper $RestoredPython @('compare', '--home', $script:Home, '--backup', (Join-Path $script:Journal.backup 'home')) | Out-Null
+    Invoke-Helper $RestoredPython @('compare', '--home', $script:HermesDataHome, '--backup', (Join-Path $script:Journal.backup 'home')) | Out-Null
     Invoke-Helper $RestoredPython @('compare', '--home', $script:Runtime, '--backup', (Join-Path $script:Journal.backup 'runtime')) | Out-Null
   }
   Write-Journal 'restored'
@@ -411,13 +411,13 @@ namespace HermesUpgrade { public static class Native {
   $AssignedHome = @([regex]::Matches($Shim, '(?im)^set "HERMES_HOME=([^"\r\n]+)"\s*$') | ForEach-Object { $_.Groups[1].Value })
   if ($AssignedHome.Count -ne 1) { throw 'Cannot resolve the original HERMES_HOME from its shim; provide a supported original launcher.' }
   if ($AssignedHome[0] -match '[%!]') { throw 'Variable-expanded HERMES_HOME needs a reviewed launcher adapter.' }
-  $script:Home = Full-Path $AssignedHome[0]
-  if ($HermesHome -and -not (Full-Path $HermesHome).Equals($script:Home, [StringComparison]::OrdinalIgnoreCase)) { throw '-HermesHome differs from the actual old shim. Resolve the launch configuration first.' }
-  Assert-Separate $script:Home $script:InstallRoot
-  Assert-Separate $script:Home $script:Source
-  if (-not $Recover -and -not (Test-Path -LiteralPath (Join-Path $script:Home 'config.yaml'))) { throw 'Resolved original home is missing config.yaml.' }
-  Assert-NoLinks $script:Home -AllowMissing:$Recover
-  if ($RecoveryPrior -and $RecoveryPrior.home -ne $script:Home) { throw 'Journal home differs from the original backup launcher.' }
+  $script:HermesDataHome = Full-Path $AssignedHome[0]
+  if ($HermesHome -and -not (Full-Path $HermesHome).Equals($script:HermesDataHome, [StringComparison]::OrdinalIgnoreCase)) { throw '-HermesHome differs from the actual old shim. Resolve the launch configuration first.' }
+  Assert-Separate $script:HermesDataHome $script:InstallRoot
+  Assert-Separate $script:HermesDataHome $script:Source
+  if (-not $Recover -and -not (Test-Path -LiteralPath (Join-Path $script:HermesDataHome 'config.yaml'))) { throw 'Resolved original home is missing config.yaml.' }
+  Assert-NoLinks $script:HermesDataHome -AllowMissing:$Recover
+  if ($RecoveryPrior -and $RecoveryPrior.home -ne $script:HermesDataHome) { throw 'Journal home differs from the original backup launcher.' }
   $KnownEnvironment = @('PYTHONUTF8', 'PYTHONIOENCODING', 'HERMES_HOME', 'HERMES_OFFLINE_HOME', 'HERMES_PYTHON', 'HERMES_BUNDLED_SKILLS', 'HERMES_OPTIONAL_SKILLS', 'HERMES_OPTIONAL_MCPS', 'HERMES_BUNDLED_LOCALES', 'HERMES_BUNDLED_PLUGINS', 'HERMES_WEB_DIST', 'HERMES_TUI_DIR', 'HERMES_DESKTOP_MANAGED', 'PIP_INDEX_URL', 'UV_DEFAULT_INDEX', 'HF_ENDPOINT', 'PLAYWRIGHT_DOWNLOAD_HOST', 'npm_config_registry', 'HF_HOME', 'HUGGINGFACE_HUB_CACHE', 'TORCH_HOME', 'TIKTOKEN_CACHE_DIR', 'MPLCONFIGDIR', 'NLTK_DATA', 'PLAYWRIGHT_BROWSERS_PATH', 'TEMP', 'TMP')
   foreach ($Line in ($Shim -split '\r?\n')) {
     if ($Line -match '^set "([A-Za-z_][A-Za-z0-9_]*)=([^"\r\n]*)"\s*$') {
@@ -432,7 +432,7 @@ namespace HermesUpgrade { public static class Native {
   foreach ($Name in @('ZHANCLAW_BASE_URL', 'ZHANCLAW_API_KEY')) {
     if (-not [Environment]::GetEnvironmentVariable($Name, 'Process')) { Set-ProcessEnv $Name ([Environment]::GetEnvironmentVariable($Name, 'User')) }
   }
-  Set-ProcessEnv 'HERMES_HOME' $script:Home
+  Set-ProcessEnv 'HERMES_HOME' $script:HermesDataHome
   Set-ProcessEnv 'HERMES_OFFLINE_HOME' $script:InstallRoot
   Set-ProcessEnv 'PYTHONHOME' $null
   Set-ProcessEnv 'PYTHONPATH' $null
@@ -456,7 +456,7 @@ namespace HermesUpgrade { public static class Native {
     $Prior = Get-Content -LiteralPath $script:JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Prior.phase -notin @('committed', 'rolled-back', 'aborted')) {
       if (-not $Recover) { throw 'An interrupted transaction exists. Inspect its backup and rerun with -Recover.' }
-      if ($Prior.schema -ne 1 -or $Prior.actorSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -or $Prior.install -ne $script:InstallRoot -or $Prior.home -ne $script:Home -or -not (Test-Within $Prior.backup (Join-Path $script:InstallRoot '.upgrade-backups'))) { throw 'Recovery journal paths/user identity are invalid.' }
+      if ($Prior.schema -ne 1 -or $Prior.actorSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -or $Prior.install -ne $script:InstallRoot -or $Prior.home -ne $script:HermesDataHome -or -not (Test-Within $Prior.backup (Join-Path $script:InstallRoot '.upgrade-backups'))) { throw 'Recovery journal paths/user identity are invalid.' }
       if ((Split-Path -Parent $Prior.backup) -ne (Join-Path $script:InstallRoot '.upgrade-backups') -or $Prior.runtimeMoved -isnot [bool] -or $Prior.homeBackupComplete -isnot [bool] -or ($Prior.runtimeMoved -and -not $Prior.homeBackupComplete)) { throw 'Recovery snapshot flags or transaction directory are invalid.' }
       Assert-NoLinks $Prior.backup
       foreach ($Spec in @($Prior.restart)) { Assert-RestartSpec $Spec }
@@ -475,18 +475,18 @@ namespace HermesUpgrade { public static class Native {
   }
   if ($Recover) { throw 'No interrupted upgrade needs recovery.' }
   if (-not (Test-Path -LiteralPath $OldPython)) { throw 'Original Python runtime is missing; use -Recover if an upgrade was interrupted.' }
-  $Inspect = Invoke-Helper $OldPython @('inspect', '--home', $script:Home)
+  $Inspect = Invoke-Helper $OldPython @('inspect', '--home', $script:HermesDataHome)
   $BundleArgs = @('bundle', '--bundle', $script:Source, '--version', $Inspect.version)
   if ($AllowSameVersion) { $BundleArgs += '--allow-same' }
   $Bundle = Invoke-Helper $OldPython $BundleArgs
-  $HomeSize = Get-TreeSize $script:Home
+  $HomeSize = Get-TreeSize $script:HermesDataHome
   $RuntimeSize = Get-TreeSize $script:Runtime
   $SourceSize = Get-TreeSize $script:Source
   Assert-FreeSpace $script:InstallRoot ($HomeSize + $RuntimeSize + 3 * $SourceSize + 1GB)
-  Assert-FreeSpace $script:Home ($HomeSize + 512MB)
+  Assert-FreeSpace $script:HermesDataHome ($HomeSize + 512MB)
   Write-Host "Hermes $($Inspect.version) -> $($Bundle.version)"
   Write-Host "Install: $script:InstallRoot"
-  Write-Host "Preserved home: $script:Home ($(@($Inspect.homes).Count) profile(s))"
+  Write-Host "Preserved home: $script:HermesDataHome ($(@($Inspect.homes).Count) profile(s))"
   Write-Host "Plan: stop exact runtime owners, cold backup, rebuild offline at final path, official migration, authenticated readiness, retain rollback backup."
   if (-not $PSCmdlet.ShouldProcess($script:InstallRoot, 'Upgrade Hermes with a paired runtime/data rollback point')) { $script:ExitCode = 0; return }
 
@@ -497,7 +497,7 @@ namespace HermesUpgrade { public static class Native {
     $LockedPrior = Get-Content -LiteralPath $script:JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($LockedPrior.phase -notin @('committed', 'rolled-back', 'aborted')) { throw 'Another transaction is unresolved; use -Recover.' }
   }
-  $Inspect = Invoke-Helper $OldPython @('inspect', '--home', $script:Home)
+  $Inspect = Invoke-Helper $OldPython @('inspect', '--home', $script:HermesDataHome)
   $BundleArgs = @('bundle', '--bundle', $script:Source, '--version', $Inspect.version)
   if ($AllowSameVersion) { $BundleArgs += '--allow-same' }
   $Bundle = Invoke-Helper $OldPython $BundleArgs
@@ -509,7 +509,7 @@ namespace HermesUpgrade { public static class Native {
   if (-not (Test-Path -LiteralPath $BackupParent)) { New-PrivateDirectory $BackupParent }
   $Backup = Join-Path $BackupParent ([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N'))
   New-PrivateDirectory $Backup
-  $script:Journal = [ordered]@{ schema = 1; phase = 'prepared'; updatedUtc = ''; install = $script:InstallRoot; home = $script:Home; backup = $Backup; fromVersion = $Inspect.version; toVersion = $Bundle.version; actorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; runtimeMoved = $false; homeBackupComplete = $false; homeSddl = ''; restart = @($Restart) }
+  $script:Journal = [ordered]@{ schema = 1; phase = 'prepared'; updatedUtc = ''; install = $script:InstallRoot; home = $script:HermesDataHome; backup = $Backup; fromVersion = $Inspect.version; toVersion = $Bundle.version; actorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; runtimeMoved = $false; homeBackupComplete = $false; homeSddl = ''; restart = @($Restart) }
   Write-Journal 'prepared'
   $script:StoppedExisting = $true
   Write-Journal 'stopping'
@@ -517,12 +517,12 @@ namespace HermesUpgrade { public static class Native {
   Start-Sleep -Seconds 2
   Assert-Quiescent
   Assert-NoSupervisors (Get-Inventory) @()
-  $script:Journal.homeSddl = (Get-Acl -LiteralPath $script:Home).Sddl
+  $script:Journal.homeSddl = (Get-Acl -LiteralPath $script:HermesDataHome).Sddl
   Write-Journal 'backing-up'
-  Copy-Tree $script:Home (Join-Path $Backup 'home')
+  Copy-Tree $script:HermesDataHome (Join-Path $Backup 'home')
   Copy-Tree (Join-Path $script:InstallRoot 'bin') (Join-Path $Backup 'bin')
   Copy-Tree $script:Runtime (Join-Path $Backup 'runtime')
-  Invoke-Helper $OldPython @('compare', '--home', $script:Home, '--backup', (Join-Path $Backup 'home')) | Out-Null
+  Invoke-Helper $OldPython @('compare', '--home', $script:HermesDataHome, '--backup', (Join-Path $Backup 'home')) | Out-Null
   Invoke-Helper $OldPython @('compare', '--home', $script:Runtime, '--backup', (Join-Path $Backup 'runtime')) | Out-Null
   Invoke-Helper $OldPython @('compare', '--home', (Join-Path $script:InstallRoot 'bin'), '--backup', (Join-Path $Backup 'bin')) | Out-Null
   Assert-Quiescent
@@ -530,8 +530,8 @@ namespace HermesUpgrade { public static class Native {
   $script:Journal.homeBackupComplete = $true
   Write-Journal 'backed-up'
   # Even read-oriented upstream imports run only after the restore point is durable.
-  $OriginalEndpoint = Invoke-Helper $OldPython @('endpoint', '--home', $script:Home)
-  Invoke-Helper $OldPython @('compare', '--home', $script:Home, '--backup', (Join-Path $Backup 'home')) | Out-Null
+  $OriginalEndpoint = Invoke-Helper $OldPython @('endpoint', '--home', $script:HermesDataHome)
+  Invoke-Helper $OldPython @('compare', '--home', $script:HermesDataHome, '--backup', (Join-Path $Backup 'home')) | Out-Null
   # Intent is flushed BEFORE replacement; the verified private snapshot is complete.
   $script:Journal.runtimeMoved = $true
   Write-Journal 'replacing-runtime'
@@ -561,29 +561,29 @@ namespace HermesUpgrade { public static class Native {
   try { Invoke-Checked $VenvPython @('-m', 'pip', 'install', '--only-binary=:all:', '--no-index', '--find-links', $Wheelhouse, '--no-build-isolation', '-e', $Editable) 'Offline editable source installation' } finally { Pop-Location }
   Invoke-Checked $VenvPython @('-m', 'pip', 'check') 'Dependency consistency check'
   Set-ProcessEnv 'HERMES_PYTHON' $VenvPython
-  Invoke-Helper $VenvPython @('verify', '--source', $SourceTree, '--version', $Bundle.version, '--home', $script:Home) | Out-Null
+  Invoke-Helper $VenvPython @('verify', '--source', $SourceTree, '--version', $Bundle.version, '--home', $script:HermesDataHome) | Out-Null
   Assert-Quiescent
   Write-Journal 'migrating-home'
   foreach ($Profile in @($Inspect.homes)) {
     Set-ProcessEnv 'HERMES_HOME' $Profile
-    $Relative = $Profile.Substring($script:Home.Length).TrimStart('\')
+    $Relative = $Profile.Substring($script:HermesDataHome.Length).TrimStart('\')
     $SavedProfile = Join-Path $Backup 'home'
     if ($Relative) { $SavedProfile = Join-Path $SavedProfile $Relative }
     Invoke-Helper $VenvPython @('migrate', '--home', $Profile, '--backup', $SavedProfile) | Out-Null
     Invoke-Helper $VenvPython @('sync-skills', '--home', $Profile) | Out-Null
   }
-  Set-ProcessEnv 'HERMES_HOME' $script:Home
-  $Endpoint = Invoke-Helper $VenvPython @('endpoint', '--home', $script:Home)
+  Set-ProcessEnv 'HERMES_HOME' $script:HermesDataHome
+  $Endpoint = Invoke-Helper $VenvPython @('endpoint', '--home', $script:HermesDataHome)
   if ($Endpoint.url -ne $OriginalEndpoint.url -or $Endpoint.auth_fingerprint -ne $OriginalEndpoint.auth_fingerprint) { throw 'Migration changed the effective API endpoint/authentication identity.' }
   if (@(Get-NetTCPConnection -State Listen -LocalPort $Endpoint.port -ErrorAction SilentlyContinue).Count) { throw 'The preserved API port is occupied by another owner.' }
   Write-Journal 'validating'
   $Gateway = [pscustomobject]@{ file = $VenvPython; args = @('-m', 'hermes_cli.main', 'gateway', 'run'); kind = 'gateway' }
   Start-Spec $Gateway | Out-Null
-  $Health = Invoke-Helper $VenvPython @('health', '--home', $script:Home, '--version', $Bundle.version, '--timeout', [string]$HealthTimeoutSeconds)
+  $Health = Invoke-Helper $VenvPython @('health', '--home', $script:HermesDataHome, '--version', $Bundle.version, '--timeout', [string]$HealthTimeoutSeconds)
   $HealthProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($Health.pid)" -ErrorAction Stop
   if (-not $HealthProcess -or -not (Test-Within $HealthProcess.ExecutablePath $script:Runtime)) { throw 'Health response did not come from this runtime.' }
   foreach ($Profile in @($Inspect.homes)) {
-    $Relative = $Profile.Substring($script:Home.Length).TrimStart('\')
+    $Relative = $Profile.Substring($script:HermesDataHome.Length).TrimStart('\')
     $SavedProfile = Join-Path $Backup 'home'
     if ($Relative) { $SavedProfile = Join-Path $SavedProfile $Relative }
     Invoke-Helper $VenvPython @('preserved', '--home', $Profile, '--backup', $SavedProfile) | Out-Null
@@ -594,7 +594,7 @@ namespace HermesUpgrade { public static class Native {
   if (-not $KeepStopped) {
     foreach ($Spec in @($Restart)) { Start-Spec $Spec | Out-Null }
     if (@($Restart).Count) {
-      $Health = Invoke-Helper $VenvPython @('health', '--home', $script:Home, '--version', $Bundle.version, '--timeout', [string]$HealthTimeoutSeconds)
+      $Health = Invoke-Helper $VenvPython @('health', '--home', $script:HermesDataHome, '--version', $Bundle.version, '--timeout', [string]$HealthTimeoutSeconds)
       $HealthProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($Health.pid)" -ErrorAction Stop
       if (-not $HealthProcess -or -not (Test-Within $HealthProcess.ExecutablePath $script:Runtime)) { throw 'Restart health came from another runtime.' }
       foreach ($Spec in @($Restart | Where-Object { $_.kind -in @('dashboard', 'serve') })) {
@@ -608,7 +608,7 @@ namespace HermesUpgrade { public static class Native {
     }
   }
   foreach ($Profile in @($Inspect.homes)) {
-    $Relative = $Profile.Substring($script:Home.Length).TrimStart('\')
+    $Relative = $Profile.Substring($script:HermesDataHome.Length).TrimStart('\')
     $SavedProfile = Join-Path $Backup 'home'
     if ($Relative) { $SavedProfile = Join-Path $SavedProfile $Relative }
     Invoke-Helper $VenvPython @('preserved', '--home', $Profile, '--backup', $SavedProfile) | Out-Null
