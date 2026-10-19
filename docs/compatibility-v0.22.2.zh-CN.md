@@ -24,6 +24,8 @@
 
 视觉能力与上下文长度不按别名猜测，确认实际服务能力后再启用；默认关闭自动安装缺失依赖。既有 home 的模型选择、凭据和数据继续由专用升级流程保留。
 
+升级在官方迁移后，从包内模板补齐明确列出的 **9 项运行配置**。已有值（包括 `false`、`0`、空字符串、空列表和 `null`）保留，非映射父节点不替换。模型、服务商、凭据、MCP 和插件整段不从模板补入或覆盖。根 home 和命名 profiles 分别处理，重复执行不重复改写；除上游管理的 `_config_version` 外，原有设置被迁移或启动过程改变时会触发回滚。完整规则见 [Windows 升级指南](upgrade-windows.zh-CN.md#3-保留的数据与配置)。
+
 发布产物分别为：
 
 - `hermes-offline-installer-win-x64.zip`
@@ -37,41 +39,42 @@ GitHub 标签仍为 `v<version>-<run number>`；OSS 上传到 `hermes/<version>-
 
 ## 验证
 
-本地已完成：
+已完成的检查：
 
-- Python 3.12 和 3.14.7 下 **103 项回归测试通过**；Python 脚本编译与 Unix shell 语法检查通过。
-- Windows PowerShell 5.1 下 **62 项隔离函数检查通过**，覆盖路径/命令行解析、只读预检、计划任务识别、冷复制、原子 journal 和文件锁。
+- 本地 Python 3.12 和 3.14.7 下各 **116 项回归测试通过**；Windows runner 的 Python 测试同样为 116 项通过。Python 脚本编译与 Unix shell 语法检查通过。
+- Windows runner 的 PowerShell 5.1 语法检查和 **62 项隔离函数检查通过**，覆盖路径/命令行解析、只读预检、计划任务识别、冷复制、原子 journal 和文件锁；真实安装/升级/回滚由下述 smoke 步骤另外验证。
 - 真实上游 `write_install_stamp.py` 调用成功，输出 schema 2、真实版本 0.22.2、提交 d923a5e、干净源码及 external 更新责任方。
 - 新配置已用上游配置/模型路由/gateway 加载器验证；测试凭据和临时 home 隔离，未调用真实模型服务。
 - 新回归覆盖：占位版本拒绝、旧版兼容、精确标签解析、身份错配、0.21.5 到 0.22.2 的清单校验、config 独立产物、OSS 校验失败阻止发布。
+- 配置补齐回归覆盖显式值、空值、非映射父节点、多 profiles、注释/引号/中文/CRLF、YAML 别名、重复键、原子替换失败、重复运行及 `.env` 键被删除的检测。真实 0.22.2 迁移器的隔离样例验证了补齐与保留规则。
 
 Windows release workflow 新增 [真实安装验证脚本](../scripts/smoke_windows.ps1)，在发布前执行：
 
 1. 解压新 ZIP，在含中文和空格的临时路径中便携安装，且不写入用户环境变量或 PATH。
 2. 验证来源、metadata、运行时版本、pip 一致性、默认配置和认证后的 API readiness。
-3. 下载并校验既有 `v0.21.5-92` ZIP。该包的安装器仍调用已移除的 `hermes version`，因此仅在隔离测试副本中将最后的版本查询改为 `hermes --version`，保留原始 runtime、源码、依赖和配置。安装真实旧 runtime 后加入需保留的模型和用户文件。
+3. 下载并校验既有 `v0.21.5-92` ZIP。该包的安装器仍调用已移除的 `hermes version`，因此仅在隔离测试副本中将最后的版本查询改为 `hermes --version`，保留原始 runtime、源码、依赖和配置。安装真实旧 runtime 后加入需保留的模型、终端超时、压缩/记忆开关、MCP、插件设置和用户文件。
 4. 运行升级 `-WhatIf`；通过占用 API 端口触发替换 runtime 后的失败，检查完整回滚及配置/凭据保留。
-5. 释放端口后执行成功升级并保持停止，验证版本及原有选择和数据。
+5. 释放端口后执行成功升级并保持停止，验证版本、原有选择和数据，并检查缺失运行配置已补齐。
 
-2026-10-19，[第 105 次构建](https://github.com/bddiudiu/hermes-offline-installer/actions/runs/39196239530)中的上述 Windows 安装/升级验证步骤全部通过，包含真实旧运行时恢复、认证后的 API readiness，以及成功升级后的模型、凭据和用户文件保留。
+2026-10-19，[第 106 次构建](https://github.com/bddiudiu/hermes-offline-installer/actions/runs/39209916773)中的上述 Windows 安装/升级验证步骤全部通过，用时 21 分 56 秒。真实旧运行时和完整 home 回滚成功，回滚后的 config 与 `.env` 哈希保持一致；成功升级样例补齐 **6 项缺失配置**，另外 3 项用户已显式设置的值继续保留。模型、凭据、MCP、插件、用户文件与已认证 API readiness 检查均通过。
 
 自动化验证不涵盖实际外部客户端、模型推理服务或全部可选插件；这些仍需目标客户端联调。
 
 ## 最终产物
 
-[GitHub Release：v0.22.2-105](https://github.com/bddiudiu/hermes-offline-installer/releases/tag/v0.22.2-105)，安装器提交 `2b905f0755fd0b908c3777a525fb80a40d501979`。
+[GitHub Release：v0.22.2-106](https://github.com/bddiudiu/hermes-offline-installer/releases/tag/v0.22.2-106)，安装器提交 `2feeb07a23b4e023d514da10785dd99fea7e3e1a`。远端发布标签指向该提交。
 
-第 105 次工作流最终状态为 **success**。OSS 已发布至 `hermes/0.22.2-105/`：ZIP、独立 config、各自校验文件及版本目录 `latest.json` 均完成 SDK 远端回读，完整 SHA-256 匹配；日志确认 `Root latest.json preserved`，本次未推广根目录更新指针。
+第 106 次工作流最终状态为 **success**。OSS 已发布至 `hermes/0.22.2-106/`：ZIP、独立 config、各自校验文件及版本目录 `latest.json` 均完成 SDK 远端回读，完整 SHA-256 匹配；日志确认 `Root latest.json preserved`，本次未推广根目录更新指针。
 
-- [Windows 一键包](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-105/hermes-offline-installer-win-x64.zip)：229,812,090 字节。
-- [独立 config.yaml](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-105/config.yaml)：3,376 字节，UTF-8 / Windows CRLF。
-- [一键包 SHA-256](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-105/hermes-offline-installer-win-x64.zip.sha256) 与 [config SHA-256](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-105/config.yaml.sha256) 同目录独立提供。
+- [Windows 一键包](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-106/hermes-offline-installer-win-x64.zip)：229,814,754 字节。
+- [独立 config.yaml](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-106/config.yaml)：3,376 字节，UTF-8 / Windows CRLF；内容与第 105 次发布一致，本次变更在升级时的补齐逻辑。
+- [一键包 SHA-256](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-106/hermes-offline-installer-win-x64.zip.sha256) 与 [config SHA-256](https://github.com/bddiudiu/hermes-offline-installer/releases/download/v0.22.2-106/config.yaml.sha256) 同目录独立提供。
 
-重新下载后已验证 ZIP 整体哈希、包内 **22,636 个文件**的完整清单哈希、Hermes 0.22.2 / Python 3.14.7 / 上游提交身份。ZIP 内 `templates/config.yaml` 与独立 `config.yaml` 逐字节一致；与仓库模板只存在 Windows CRLF / LF 换行差异。ZIP 内无额外版本示例，也没有将安装包和独立 config 再合成外层压缩包。
+重新下载后已验证 ZIP 整体哈希、包内 **22,636 个文件**的完整清单哈希、Hermes 0.22.2 / Python 3.14.7 / 上游提交身份，并确认包内升级脚本与安装器提交一致。ZIP 内 `templates/config.yaml` 与独立 `config.yaml` 逐字节一致；与仓库模板只存在 Windows CRLF / LF 换行差异。ZIP 内无额外版本示例，也没有将安装包和独立 config 再合成外层压缩包。
 
 ```text
 hermes-offline-installer-win-x64.zip
-ddd059a48ebbde14394d8093b246a8a9dbc8dc25338e6b82be0109b4416d690b
+b9ad81224edbaacc34a58525cbfe8684d2035d7bdb556b460bbbc417e2a1ce75
 
 config.yaml
 0e3a9941f3966e75743d1e151dc14f6867089dd4bf1abc945a149902a0bc98e6
