@@ -121,6 +121,10 @@ upgrade.cmd "C:\old\install" -Recover
 
 ## 6. 构建验收与 OSS 更新渠道
 
+Hermes 0.22.2 的真实版本由包内 `install-stamp.json` 提供；其 Python distribution metadata 为 `0.0.0`，不作为升级目标版本。升级器同时校验源码身份、清单、安装元数据和运行时身份，仍支持旧版 0.21.5 的版本读取方式。
+
+发布资产另外提供 `config.yaml` 及 SHA-256，与 ZIP 并列放置。ZIP 内保留首次安装所需的默认模板；升级继续保留旧 home 的配置，不用新模板重置已有模型。
+
 GitHub Actions 的 `update_root_latest` 是默认 `false` 的布尔输入。常规构建会先上传安装包、校验文件等产物，全部成功后再上传版本目录中的元数据：
 
 ```text

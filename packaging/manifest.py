@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+DEFAULT_HERMES_TAG = "v0.22.2"
 HERMES_SOURCE = os.environ.get(
     "HERMES_SOURCE",
-    "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git",
+    f"hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@{DEFAULT_HERMES_TAG}",
 )
-HERMES_UPSTREAM_TAG = os.environ.get("HERMES_UPSTREAM_TAG", "").strip()
-PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.12.14")
+HERMES_UPSTREAM_TAG = os.environ.get(
+    "HERMES_UPSTREAM_TAG", DEFAULT_HERMES_TAG if "HERMES_SOURCE" not in os.environ else ""
+).strip()
+PYTHON_VERSION = os.environ.get("PYTHON_VERSION", "3.14.7")
 UV_VERSION = os.environ.get("UV_VERSION", "0.12.7")
 
 

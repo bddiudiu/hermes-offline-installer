@@ -1274,7 +1274,7 @@ try {
 if ($HermesEditableInstallExitCode -ne 0) {
   throw "Hermes editable install failed with exit code $HermesEditableInstallExitCode."
 }
-& $VenvPython -c "import aiohttp, fastapi, hermes_cli, multipart, uvicorn, websockets"
+& $VenvPython -c "import aiohttp, fastapi, hermes_cli, multipart, openai, ruamel.yaml, dotenv, truststore, uvicorn, websockets"
 if ($LASTEXITCODE -ne 0) {
   throw "Hermes dependency check failed with exit code $LASTEXITCODE."
 }

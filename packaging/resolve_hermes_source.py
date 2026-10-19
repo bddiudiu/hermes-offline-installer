@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 
 DEFAULT_REPO = "NousResearch/hermes-agent"
-UNPREFIXED_RELEASE_TAG = re.compile(r"\d{4}(?:\.\d+){2,}")
+UNPREFIXED_RELEASE_TAG = re.compile(r"\d{1,4}(?:\.\d+){2,}")
 
 
 def latest_release_tag(repo: str) -> str:
@@ -60,7 +60,7 @@ def normalize_release_tag(value: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resolve Hermes Agent source from an explicit or latest upstream tag.")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repo in owner/name form.")
-    parser.add_argument("--tag", default="", help="Optional upstream tag override, e.g. v2026.7.1.")
+    parser.add_argument("--tag", default="", help="Optional upstream tag override, e.g. v0.22.2.")
     args = parser.parse_args()
 
     tag = normalize_release_tag(args.tag or latest_release_tag(args.repo))

@@ -1,24 +1,85 @@
+# Hermes Agent v0.22.2 / ZhanClaw 全新配置示例
+# 核对日期：2026-10-19
+# 上游标签：v0.22.2
+# 上游提交：d923a5eb487a17c0a68801bba9ef0f56c81040a8
+#
+# 配套 Hermes 0.22.2 离线安装器；config.yaml 只配置运行行为，
+# 不会替换旧版的 Python 或 Hermes runtime。
+#
+# 新安装：另存为 $HERMES_HOME/config.yaml，编码使用 UTF-8。
+# Windows 默认位置：C:\ProgramData\SSC\Hermes\config.yaml。
+# 已有安装：先备份，按需合并；不要用示例覆盖 profiles、MCP 或插件配置。
+# 不手工设置 _config_version；由 Hermes 的配置迁移逻辑管理。
+#
+# 启动进程必须能读取以下凭据：
+#   ZHANCLAW_BASE_URL：模型服务的 OpenAI 兼容根地址，通常以 /v1 结尾；
+#                     不要填写到 /chat/completions。
+#   ZHANCLAW_API_KEY：模型服务密钥，沿用安装器的 Windows 用户环境变量。
+#   API_SERVER_KEY：本机 API Server 的独立密钥，沿用安装器生成的
+#                   $HERMES_HOME/.env 中的值；调用方发送 Bearer token。
+# 不把真实密钥写入此示例。手动部署时需另行生成 API_SERVER_KEY。
+# 修改环境变量后，重启 Hermes 和负责启动它的客户端。
+
 model:
+  # qwen3 是本项目既有模型别名，必须在你的模型服务中实际可用。
   default: qwen3
   provider: custom:zhan_ai
-  supports_vision: true
+  # 不按别名猜测上下文长度和视觉能力，默认交给运行时判断。
+  # 只有确认该别名实际映射到视觉模型后，才启用下一项：
+  # supports_vision: true
+  # 只有确认服务的实际窗口后，才手动填写：
+  # context_length: 131072
 
 providers:
   zhan_ai:
     api: "${ZHANCLAW_BASE_URL}"
     key_env: ZHANCLAW_API_KEY
+    # 本示例使用 OpenAI Chat Completions 兼容接口。
+    # 如果服务只提供其他协议，应按其能力修改，不能只更换 URL。
+    api_mode: chat_completions
+    # 作为模型发现不可用时的候选列表；修改默认模型时同步调整此列表。
     models:
       - qwen3
 
 platform_toolsets:
+  cli:
+    - hermes-cli
   api_server:
     - hermes-api-server
 
 terminal:
   backend: local
+  # 本地工具在启动时的工作目录执行；也可改成已有的绝对路径。
+  cwd: "."
+  timeout: 180
+  home_mode: auto
 
 platforms:
   api_server:
     enabled: true
     extra:
+      # 8642 是给客户端调用的 API Server，Dashboard 默认端口另为 9119。
+      host: 127.0.0.1
       port: 8642
+      # 不填写 key，运行时从 API_SERVER_KEY 读取。
+      # 不存在额外的 auth: true 配置要求。
+
+compression:
+  enabled: true
+  # 阈值、摘要模型与超时沿用 0.22.2 默认值，避免复制旧版本的调优参数。
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+
+security:
+  # 离线分发策略：缺少可选依赖时不要在首次使用功能时自动联网安装。
+  # 已预装的依赖仍可用；这不禁止显式的人工安装操作，也不是网络隔离。
+  allow_lazy_installs: false
+
+# 其他设置沿用 0.22.2 默认值。需要时再按实际用途添加：
+# agent:
+#   max_turns: 100
+# mcp_servers: {}
+# 不在 YAML 中配置 Dashboard 的监听参数；通过 hermes dashboard
+# --host 127.0.0.1 --port 9119 指定，或沿用一键包的 launch.cmd。

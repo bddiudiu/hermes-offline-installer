@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       hermes_tag:
-        description: "Upstream Hermes release tag override, e.g. v2026.7.1"
+        description: "Upstream Hermes release tag, e.g. v0.22.2"
         required: false
-        default: ""
+        default: "v0.22.2"
       update_root_latest:
         description: "Promote this build to the root latest.json (default preserves the live update channel)"
         required: false
@@ -39,7 +39,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.14.7"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -104,6 +104,18 @@ jobs:
         shell: bash
         run: python packaging/build_bundle.py --platform win-x64 --wheelhouse build/wheelhouse --output dist
 
+      - name: Free disposable build staging before install validation
+        shell: powershell
+        run: |
+          foreach ($path in @('build/wheelhouse', 'build/wheelhouse-build', '.bundle-work')) {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+          }
+
+      - name: Verify Windows offline install and upgrade
+        shell: powershell
+        timeout-minutes: 30
+        run: .\scripts\smoke_windows.ps1 -Archive dist\hermes-offline-installer-win-x64.zip -LegacyTag v0.21.5-92
+
       - name: Generate checksums
         shell: bash
         working-directory: dist
@@ -160,6 +172,8 @@ jobs:
             Hermes upstream tag: ${{ steps.release.outputs.hermes_upstream_tag }}
             GitHub Actions run: ${{ github.run_number }}
             Packaging commit: ${{ github.sha }}
+
+            config.yaml is a separate release asset with its own SHA-256. The ZIP contains the installer defaults; no outer archive combines the downloads.
 
             Changes in this build:
             ${{ steps.release.outputs.changes }}

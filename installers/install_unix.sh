@@ -247,6 +247,8 @@ echo "Installing Hermes from bundled source: $RUNTIME_SOURCE ($HERMES_EDITABLE_R
     -e "$HERMES_EDITABLE_REQUIREMENT"
 )
 
+"$VENV_PYTHON" -c "import aiohttp, fastapi, hermes_cli, multipart, openai, ruamel.yaml, dotenv, truststore, uvicorn, websockets"
+
 if [ ! -x "$VENV_DIR/bin/hermes" ]; then
   echo "Hermes executable was not created: $VENV_DIR/bin/hermes" >&2
   exit 1

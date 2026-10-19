@@ -170,6 +170,30 @@ class OSSReleaseContractTests(unittest.TestCase):
         self.run_upload(promote="True")
         self.assertNotIn("hermes/latest.json", [key for key, _ in self.calls])
 
+    def test_separate_config_is_verified_before_version_metadata(self):
+        config = self.root / "upload" / "config.yaml"
+        config.write_text("model:\n  default: qwen3\n")
+        config.with_suffix(".yaml.sha256").write_text(hashlib.sha256(config.read_bytes()).hexdigest() + "  config.yaml\n")
+        self.run_upload()
+        keys = [key for key, _ in self.calls]
+        self.assertIn(VERSION_PREFIX + "/config.yaml", keys)
+        self.assertIn(VERSION_PREFIX + "/config.yaml.sha256", keys)
+        self.assertEqual(keys[-1], VERSION_PREFIX + "/latest.json")
+        self.assertNotIn("hermes/latest.json", keys)
+        self.calls.clear()
+        with self.assertRaisesRegex(publisher.UploadError, "SHA-256"):
+            self.run_upload(corrupt_key=VERSION_PREFIX + "/config.yaml")
+        self.assertFalse(any(key.endswith("latest.json") for key, _ in self.calls))
+
+    def test_separate_config_requires_matching_checksum_and_no_extra_files(self):
+        config = self.root / "upload" / "config.yaml"
+        config.write_text("model: fixture\n")
+        with self.assertRaises(publisher.UploadError):
+            publisher.prepare_files(config.parent, "hermes", VERSION_PREFIX)
+        config.with_suffix(".yaml.sha256").write_text("0" * 64 + "  config.yaml\n")
+        with self.assertRaisesRegex(publisher.UploadError, "checksum mismatch"):
+            publisher.prepare_files(config.parent, "hermes", VERSION_PREFIX)
+
     def test_failed_artifact_prevents_both_metadata_uploads(self) -> None:
         with self.assertRaisesRegex(publisher.UploadError, "bounded retries"):
             self.run_upload(promote="true", failed_key=f"{VERSION_PREFIX}/hermes-offline-installer-win-x64.zip")

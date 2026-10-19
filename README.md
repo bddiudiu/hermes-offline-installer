@@ -28,6 +28,8 @@ Release artifacts follow this naming convention:
 - `hermes-offline-installer-mac-x64.tar.gz`
 - `hermes-offline-installer-mac-arm64.tar.gz`
 
+`config.yaml` and `config.yaml.sha256` are separate release assets beside the installer ZIP. There is no outer archive combining them. The ZIP retains only the required default `templates/config.yaml` and `env.template`, without additional versioned examples.
+
 The current GitHub Actions release workflow builds `win-x64` first. The packaging scripts already accept `linux-x64`, `mac-x64`, and `mac-arm64` platform targets for local testing and future release matrix expansion.
 
 ## Installation
@@ -280,7 +282,11 @@ hermes dashboard
 
 ## Build
 
-The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.12.14`, snapshots the selected Hermes source checkout, downloads dependency wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle. Hermes itself is no longer built as a wheel because current upstream releases support source-checkout installs instead of PyPI/wheel distribution.
+The default source is pinned to Hermes `v0.22.2`. Both the build interpreter and bundled Python use **3.14.7**; build natively on the target OS and architecture because pip's `--python-version` does not change the interpreter used to evaluate dependency markers. The upstream distribution version is `0.0.0`; the real release identity comes from the exact Git tag and the upstream-generated `install-stamp.json`, with `external` update ownership.
+
+Before publication, the Windows release workflow checks an isolated portable install, configuration and authenticated readiness, followed by an upgrade and failure rollback from the published `0.21.5-92` installer. Failures block release/OSS uploads. Root `latest.json` promotion remains opt-in.
+
+The recommended release path is GitHub Actions. CI prepares the portable Python runtime with `uv python install 3.14.7`, snapshots the selected Hermes source checkout, downloads dependency wheels into an offline wheelhouse, exports Hermes runtime resources, and builds the final platform bundle. Hermes itself is no longer built as a wheel because current upstream releases support source-checkout installs instead of PyPI/wheel distribution.
 
 Local build example:
 

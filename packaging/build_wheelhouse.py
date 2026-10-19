@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +26,8 @@ OFFLINE_RUNTIME_REQUIREMENTS = [
     "uvicorn==0.41.0",
     # Required by dashboard/API websocket endpoints and tools.browser_dialog_tool.
     "websockets==15.0.1",
+    # The transactional upgrader still parses legacy configuration with PyYAML.
+    "PyYAML==6.0.3",
 ]
 
 OFFLINE_REQUIRED_WHEELS = [
@@ -36,10 +38,17 @@ OFFLINE_REQUIRED_WHEELS = [
     "uvicorn",
     "websockets",
     "wheel",
+    "openai",
+    "python_dotenv",
+    "ruamel_yaml",
+    "rich",
+    "truststore",
+    "psutil",
+    "pyyaml",
 ]
 
 BUILD_REQUIREMENTS = [
-    # Match the build backend declared by Hermes Agent v2026.9.24.
+    # Match the build backend declared by Hermes Agent v0.22.2.
     "setuptools==83.0.0",
     "wheel",
 ]
@@ -95,7 +104,27 @@ class HermesSource:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from hermes_version import distribution_version, source_identity, stable_version
+
 LOCAL_BUNDLED_RESOURCES_DIR = ROOT / "bundled-resources"
+
+
+def validate_build_environment(target_platform: str) -> None:
+    # pip --python-version selects wheel tags, but requirement markers still use
+    # the interpreter running pip. Resolve on the actual target Python/platform.
+    expected = tuple(int(part) for part in PYTHON_VERSION.split("."))
+    if sys.version_info[:3] != expected:
+        raise SystemExit(f"Build with Python {PYTHON_VERSION}; pip markers use the build interpreter")
+    targets = {
+        "win-x64": ("win32", {"amd64", "x86_64"}),
+        "linux-x64": ("linux", {"amd64", "x86_64"}),
+        "mac-x64": ("darwin", {"amd64", "x86_64"}),
+        "mac-arm64": ("darwin", {"arm64", "aarch64"}),
+    }
+    target = targets.get(target_platform)
+    if target is None or sys.platform != target[0] or platform.machine().lower() not in target[1]:
+        raise SystemExit("Build the wheelhouse natively on its target platform and architecture")
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -258,6 +287,8 @@ def export_hermes_source(source_dir: Path | None, output: Path) -> Path:
         symlinks=True,
         ignore=shutil.ignore_patterns(*HERMES_SOURCE_IGNORES),
     )
+    if distribution_version(source_dir) == "0.0.0":
+        stamp_source(source_dir, bundled_source)
     validate_hermes_source(bundled_source)
     return bundled_source
 
@@ -277,16 +308,38 @@ def validate_hermes_source(source_dir: Path) -> None:
 
 
 def read_source_version(source_dir: Path) -> str:
-    pyproject = source_dir / "pyproject.toml"
-    try:
-        with pyproject.open("rb") as handle:
-            project = tomllib.load(handle).get("project", {})
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise SystemExit(f"Cannot read Hermes version from {pyproject}: {exc}") from exc
-    version = str(project.get("version", "")).strip()
-    if not version:
-        raise SystemExit(f"Hermes source does not declare project.version: {pyproject}")
-    return version
+    if (source_dir / "install-stamp.json").exists():
+        return source_identity(source_dir)["version"]
+    version = distribution_version(source_dir)
+    if version != "0.0.0":
+        return stable_version(version)
+    tags = subprocess.check_output(
+        ["git", "tag", "--points-at", "HEAD"], cwd=source_dir, text=True,
+    ).splitlines()
+    versions = {tag[1:] for tag in tags if re.fullmatch(r"v[0-9]{1,3}\.[0-9]+\.[0-9]+", tag)}
+    if len(versions) != 1:
+        raise SystemExit("Placeholder metadata requires exactly one stable release tag at source HEAD")
+    return stable_version(versions.pop())
+
+
+def stamp_source(source_dir: Path, bundled_source: Path) -> None:
+    version = read_source_version(source_dir)
+    commit = git_commit(source_dir)
+    if not commit:
+        # An already stamped file:// snapshot remains valid without a Git checkout.
+        source_identity(bundled_source, expected_version=version)
+        return
+    env = os.environ.copy()
+    for name in ("HERMES_BUILD_COMMIT", "HERMES_PAYLOAD_TAG", "HERMES_DESKTOP_VARIANT"):
+        env.pop(name, None)
+    run([
+        sys.executable, str(source_dir / "scripts" / "write_install_stamp.py"),
+        "--output", str(bundled_source / "install-stamp.json"),
+        "--commit", commit, "--branch", "", "--base-version", version,
+        "--display-version", version, "--distance", "0", "--source", "build",
+        "--update-mechanism", "external",
+    ], cwd=source_dir, env=env)
+    source_identity(bundled_source, expected_version=version, expected_commit=commit)
 
 
 def parse_extras(value: str) -> list[str]:
@@ -350,6 +403,7 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path, help="wheelhouse 输出目录")
     parser.add_argument("--extras", default=DEFAULT_HERMES_EXTRAS, help="Hermes extras，例如 all,web,telegram；默认 all")
     args = parser.parse_args()
+    validate_build_environment(args.platform)
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -383,7 +437,8 @@ def main() -> None:
     requirements = output / "requirements.txt"
     install_requirement_lines = [*BUILD_REQUIREMENTS, "croniter", *OFFLINE_RUNTIME_REQUIREMENTS]
     download_requirements = work_dir / "requirements-download.txt"
-    download_requirement_lines = [hermes_spec, *BUILD_REQUIREMENTS, "croniter", *OFFLINE_RUNTIME_REQUIREMENTS]
+    # Resolve the same checkout that supplied the resources; do not clone a mutable tag twice.
+    download_requirement_lines = [hermes_source.spec, *BUILD_REQUIREMENTS, "croniter", *OFFLINE_RUNTIME_REQUIREMENTS]
     download_requirements.write_text("\n".join(download_requirement_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
@@ -418,12 +473,13 @@ def main() -> None:
         extra={
             "kind": "wheelhouse",
             "hermes_version": hermes_version,
+            "hermes_distribution_version": distribution_version(bundled_source),
             "hermes_install_spec": hermes_install_spec,
             "hermes_install_mode": "editable-source",
             "hermes_editable_requirement": hermes_editable_requirement,
             "hermes_source_directory": "hermes-source",
             "hermes_resolved_spec": hermes_source.spec,
-            "hermes_source_commit": git_commit(hermes_source.source_dir),
+            "hermes_source_commit": git_commit(hermes_source.source_dir) or source_identity(bundled_source)["commit"],
             "extras": extras,
         },
     )

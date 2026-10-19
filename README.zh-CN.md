@@ -28,6 +28,8 @@ Release 产物采用以下命名规则：
 - `hermes-offline-installer-mac-x64.tar.gz`
 - `hermes-offline-installer-mac-arm64.tar.gz`
 
+另行输出 `config.yaml` 与 `config.yaml.sha256`，和安装包 ZIP 并列下载，不再组合成一个总压缩包。ZIP 内只保留安装所需的默认 `templates/config.yaml`、`env.template`，不包含额外的版本示例文件。
+
 当前 GitHub Actions release workflow 优先构建 `win-x64`。打包脚本已经支持 `linux-x64`、`mac-x64` 和 `mac-arm64` 平台参数，可用于本地测试和后续扩展 release matrix。
 
 ## 安装
@@ -280,7 +282,11 @@ hermes dashboard
 
 ## 构建
 
-推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.12.14` 准备 portable Python runtime，固化选定版本的 Hermes 源码快照，下载依赖 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。Hermes 本体不再构建为 wheel，因为上游最新版本已经改为支持源码检出安装，不再支持 PyPI/wheel 分发。
+当前默认固定到 Hermes `v0.22.2`。构建解释器和包内 Python 均为 **3.14.7**，必须在目标系统和架构上原生构建；不能只通过 pip 的 `--python-version` 参数模拟新版 Python 的依赖条件。0.22.2 的源码 distribution version 为 `0.0.0`，真实发布版本从固定 Git 标签读取，并通过上游生成器写入 `install-stamp.json`，更新责任方为 `external`。
+
+Windows release workflow 在发布前执行隔离便携安装、配置与认证健康检查，以及从 `0.21.5-92` 的真实升级和失败回滚演练。测试失败会阻止 Release/OSS 上传；根 `latest.json` 的推广规则保持不变。
+
+推荐通过 GitHub Actions 构建发布产物。CI 会使用 `uv python install 3.14.7` 准备 portable Python runtime，固化选定版本的 Hermes 源码快照，下载依赖 wheels 到离线 wheelhouse，导出 Hermes runtime resources，并构建最终平台安装包。Hermes 本体不再构建为 wheel，因为上游最新版本已经改为支持源码检出安装，不再支持 PyPI/wheel 分发。
 
 本地构建示例：
 

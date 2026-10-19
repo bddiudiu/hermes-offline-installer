@@ -16,9 +16,9 @@ from pathlib import Path
 import re
 import sys
 import time
-import tomllib
 import urllib.request
 
+from hermes_version import source_identity, stable_version, VersionError
 
 class UpgradeError(RuntimeError):
     pass
@@ -49,11 +49,18 @@ def verify_bundle(bundle: Path, installed_version: str, allow_same: bool = False
         raise UpgradeError("Downgrades require restoring the matching runtime and data backup")
     if version_tuple(target) == version_tuple(installed_version) and not allow_same:
         raise UpgradeError("Already at target version; use -AllowSameVersion for an intentional rebuild")
-    source = tomllib.loads((bundle / "hermes-agent" / "pyproject.toml").read_text(encoding="utf-8"))
-    if source.get("project", {}).get("version") != target:
-        raise UpgradeError("Source and bundle versions differ")
+    try:
+        identity = source_identity(bundle / "hermes-agent", expected_version=target,
+                                   expected_commit=manifest.get("hermes_source_commit"))
+    except VersionError as exc:
+        raise UpgradeError(str(exc)) from exc
     if manifest.get("wheelhouse", {}).get("hermes_version") != target:
         raise UpgradeError("Wheelhouse and bundle versions differ")
+    if identity["commit"] and (
+        manifest.get("hermes_source_commit") != identity["commit"]
+        or manifest.get("wheelhouse", {}).get("hermes_source_commit") != identity["commit"]
+    ):
+        raise UpgradeError("Source, wheelhouse and bundle commits differ")
     checksum = json.loads((bundle / "upgrade-manifest.json").read_text(encoding="utf-8-sig"))
     files = checksum.get("files")
     if checksum.get("schema") != 1 or not isinstance(files, dict) or not files:
@@ -185,10 +192,22 @@ def inspect_home(home: Path) -> dict:
         if gateway.get("multiplex_profiles") is False or gateway.get("standalone") is True:
             raise UpgradeError("Standalone/multiplex opt-out topology needs a separate reviewed migration")
     # Changing pre-multiplex deployments with named profiles can change ingress ownership.
-    installed = importlib.metadata.version("hermes-agent")
+    installed = installed_version()
     if len(profiles) > 1 and version_tuple(installed) < version_tuple("0.21.4"):
         raise UpgradeError("Named profiles on this older runtime require gateway topology review before upgrading")
     return {"version": installed, "homes": [str(p) for p in profiles]}
+
+
+def installed_version() -> str:
+    metadata_version = importlib.metadata.version("hermes-agent")
+    try:
+        if metadata_version != "0.0.0":
+            return stable_version(metadata_version)
+        import hermes_cli
+        source = Path(hermes_cli.__file__).resolve().parent.parent
+        return source_identity(source)["version"]
+    except VersionError as exc:
+        raise UpgradeError(str(exc)) from exc
 
 
 def migrate(home: Path, backup: Path) -> dict:
@@ -217,8 +236,17 @@ def verify_runtime(source: Path, expected: str, home: Path) -> dict:
     from hermes_constants import get_hermes_home
     if Path(hermes_cli.__file__).resolve().parent != (source / "hermes_cli").resolve():
         raise UpgradeError("Hermes imports do not come from the final runtime source directory")
-    if importlib.metadata.version("hermes-agent") != expected:
+    try:
+        identity = source_identity(source, expected_version=expected)
+    except VersionError as exc:
+        raise UpgradeError("Installed Hermes version differs from bundle manifest: " + str(exc)) from exc
+    if importlib.metadata.version("hermes-agent") != identity["distribution_version"]:
         raise UpgradeError("Installed Hermes version differs from bundle manifest")
+    if identity["commit"]:
+        from hermes_cli.version_info import get_version_info
+        runtime = get_version_info()
+        if runtime.base_version != expected or runtime.commit != identity["commit"]:
+            raise UpgradeError("Hermes runtime identity differs from the packaged source")
     if get_hermes_home().resolve() != home.resolve():
         raise UpgradeError("Resolved Hermes home changed")
     return {"version": expected, "source_verified": True}

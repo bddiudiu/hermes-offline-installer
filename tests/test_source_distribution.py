@@ -19,9 +19,10 @@ import resolve_hermes_source  # noqa: E402
 class SourceDistributionTests(unittest.TestCase):
     def test_release_workflow_matches_bundled_tool_versions(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        self.assertEqual(build_bundle.PYTHON_VERSION, "3.12.14")
+        self.assertEqual(build_bundle.PYTHON_VERSION, "3.14.7")
         self.assertEqual(build_bundle.UV_VERSION, "0.12.7")
         self.assertIn(f'"uv=={build_bundle.UV_VERSION}"', workflow)
+        self.assertIn(f'python-version: "{build_bundle.PYTHON_VERSION}"', workflow)
 
     def test_runtime_requirements_match_current_upstream_release(self) -> None:
         self.assertIn("aiohttp==3.14.3", build_wheelhouse.OFFLINE_RUNTIME_REQUIREMENTS)
@@ -33,6 +34,8 @@ class SourceDistributionTests(unittest.TestCase):
         self.assertEqual(resolve_hermes_source.normalize_release_tag("2026.8.27"), "v2026.8.27")
         self.assertEqual(resolve_hermes_source.normalize_release_tag("v2026.8.27"), "v2026.8.27")
         self.assertEqual(resolve_hermes_source.normalize_release_tag("main"), "main")
+        self.assertEqual(resolve_hermes_source.normalize_release_tag("0.22.2"), "v0.22.2")
+        self.assertEqual(resolve_hermes_source.normalize_release_tag("v0.22.2"), "v0.22.2")
 
     def test_parse_extras_normalizes_and_rejects_invalid_values(self) -> None:
         self.assertEqual(build_wheelhouse.parse_extras(" all, web "), ["all", "web"])

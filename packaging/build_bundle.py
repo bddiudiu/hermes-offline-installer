@@ -8,6 +8,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -16,6 +17,8 @@ from pathlib import Path
 from manifest import PYTHON_VERSION, UV_VERSION, write_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from hermes_version import source_identity
 PYTHON_STDLIB_ZIP = f"python{''.join(PYTHON_VERSION.split('.')[:2])}.zip"
 
 UV_TARGETS = {
@@ -185,6 +188,24 @@ def validate_hermes_source(source: Path) -> None:
         raise SystemExit(
             "Hermes source snapshot is incomplete. Missing: " + ", ".join(sorted(missing))
         )
+    source_identity(source)
+
+
+def copy_install_templates(bundle: Path) -> None:
+    destination = bundle / "templates"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("config.yaml", "env.template"):
+        shutil.copy2(ROOT / "templates" / name, destination / name)
+
+
+def export_config(output: Path) -> Path:
+    # A separate release asset beside the installer ZIP, never an outer archive.
+    output.mkdir(parents=True, exist_ok=True)
+    config = output / "config.yaml"
+    shutil.copy2(ROOT / "templates" / "config.yaml", config)
+    checksum = hashlib.sha256(config.read_bytes()).hexdigest()
+    (output / "config.yaml.sha256").write_text(f"{checksum}  config.yaml\n", encoding="utf-8")
+    return config
 
 
 def archive_bundle(platform_name: str, bundle: Path, output: Path) -> Path:
@@ -284,6 +305,14 @@ def main() -> None:
 
     wheelhouse = args.wheelhouse.resolve()
     wheelhouse_manifest = read_wheelhouse_manifest(wheelhouse)
+    if (wheelhouse_manifest.get("target_platform") != args.platform
+            or wheelhouse_manifest.get("python_version") != PYTHON_VERSION):
+        raise SystemExit("Wheelhouse platform/Python differs from the requested bundle")
+    identity = source_identity(wheelhouse / "hermes-source",
+                               expected_version=wheelhouse_manifest.get("hermes_version"),
+                               expected_commit=wheelhouse_manifest.get("hermes_source_commit"))
+    if identity["commit"] and wheelhouse_manifest.get("hermes_source_commit") != identity["commit"]:
+        raise SystemExit("Stamped wheelhouse is missing its matching source commit")
     copytree(wheelhouse, bundle / "wheelhouse")
     resources_in_wheelhouse = bundle / "wheelhouse" / "hermes-resources"
     validate_hermes_resources(resources_in_wheelhouse)
@@ -292,7 +321,7 @@ def main() -> None:
     validate_hermes_source(source_in_wheelhouse)
     shutil.move(str(source_in_wheelhouse), str(bundle / "hermes-agent"))
     copytree(ROOT / "installers", bundle / "installers")
-    copytree(ROOT / "templates", bundle / "templates")
+    copy_install_templates(bundle)
     copytree(ROOT / "scripts", bundle / "scripts")
 
     for script in [bundle / "installers" / "install_unix.sh", bundle / "scripts" / "verify_unix.sh"]:
@@ -322,6 +351,7 @@ def main() -> None:
             "kind": "bundle",
             "wheelhouse": wheelhouse_manifest,
             "hermes_version": wheelhouse_manifest.get("hermes_version"),
+            "hermes_distribution_version": wheelhouse_manifest.get("hermes_distribution_version"),
             "hermes_extras": wheelhouse_manifest.get("extras"),
             "hermes_install_mode": wheelhouse_manifest.get("hermes_install_mode"),
             "hermes_source_commit": wheelhouse_manifest.get("hermes_source_commit"),
@@ -335,7 +365,9 @@ def main() -> None:
     validate_archive_python_stdlib(args.platform, archive)
     validate_archive_hermes_resources(args.platform, archive)
     validate_archive_hermes_source(args.platform, archive)
+    config = export_config(args.output.resolve())
     print(f"created {archive}")
+    print(f"created separate config {config}")
 
 
 if __name__ == "__main__":

@@ -601,8 +601,12 @@ class HealthAndOutputTests(unittest.TestCase):
                     upgrade.health(Path("home"), "0.21.4", 1)
 
     def test_runtime_verification_checks_final_source_version_and_exact_home(self) -> None:
-        source = Path("final-runtime/hermes-agent").resolve()
-        home = Path("existing-home").resolve()
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        source = Path(temp.name) / "final-runtime" / "hermes-agent"
+        source.mkdir(parents=True)
+        (source / "pyproject.toml").write_text('[project]\nversion = "0.21.4"\n')
+        home = Path(temp.name) / "existing-home"
         hermes_cli = types.ModuleType("hermes_cli")
         hermes_cli.__file__ = str(source / "hermes_cli/__init__.py")
         constants = types.ModuleType("hermes_constants")

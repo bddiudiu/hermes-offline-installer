@@ -60,10 +60,11 @@ def prepare_files(directory, prefix, path_prefix):
     if not files or any(not p.is_file() or p.is_symlink() for p in files):
         raise UploadError("Upload directory contains missing, linked or unexpected entries")
     archives = [p for p in files if p.name.endswith((".zip", ".tar.gz"))]
-    if not archives or set(files) != {p for archive in archives for p in (archive, Path(str(archive) + ".sha256"))}:
+    payloads = [*archives, *(p for p in files if p.name == "config.yaml")]
+    if not archives or set(files) != {p for payload in payloads for p in (payload, Path(str(payload) + ".sha256"))}:
         raise UploadError("Every archive must have exactly one checksum sidecar")
     hashes = {}
-    for archive in archives:
+    for archive in payloads:
         expected = Path(str(archive) + ".sha256").read_text(encoding="utf-8").strip().split()
         if len(expected) != 2 or expected[1].lstrip("*") != archive.name or not re.fullmatch(r"[a-fA-F0-9]{64}", expected[0]):
             raise UploadError("Invalid archive checksum sidecar")
@@ -135,6 +136,8 @@ class Uploader:
         headers = {"x-oss-meta-sha256": expected}
         if path.name == "latest.json":
             headers["Content-Type"] = "application/json"
+        elif path.name == "config.yaml":
+            headers["Content-Type"] = "application/yaml; charset=utf-8"
         if size <= self.part_size:
             contents = path.read_bytes()
             self.call("put " + path.name, lambda: self.bucket.put_object(
