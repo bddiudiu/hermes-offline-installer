@@ -317,7 +317,7 @@ ensure_api_server_key "$HERMES_HOME/.env"
 "$PYTHON_BIN" "$BUNDLE_DIR/scripts/configure_config.py" "$HERMES_HOME/config.yaml"
 
 sync_bundled_skills
-"$BIN_DIR/hermes" version
+"$BIN_DIR/hermes" --version
 RUNTIME_INSTALL_COMMITTED=1
 trap - ERR
 if [ -n "$RUNTIME_BACKUP_DIR" ] && [ -d "$RUNTIME_BACKUP_DIR" ]; then

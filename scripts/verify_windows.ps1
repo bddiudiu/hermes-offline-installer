@@ -163,4 +163,5 @@ if (-not $PortableMode) {
   }
 }
 
-& $HermesCmd version
+& $HermesCmd --version
+if ($LASTEXITCODE -ne 0) { throw "Hermes version check failed." }

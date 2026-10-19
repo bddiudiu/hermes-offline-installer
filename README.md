@@ -241,7 +241,7 @@ uninstall.cmd
 Verify the installation:
 
 ```powershell
-hermes version
+hermes --version
 hermes dashboard
 ```
 
@@ -276,7 +276,7 @@ In portable mode, the shim is written under `$HERMES_OFFLINE_HOME/bin`, defaulti
 Reopen the terminal and verify:
 
 ```bash
-hermes version
+hermes --version
 hermes dashboard
 ```
 

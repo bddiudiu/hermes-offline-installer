@@ -137,7 +137,8 @@ if ($Portable) {
 }
 
 try {
-  & $InstallScript @InstallArgs *>> $ResolvedLogFile
+  # PowerShell 5.1 redirection defaults to UTF-16; match Append-LogLine's UTF-8.
+  & $InstallScript @InstallArgs *>&1 | Out-File -LiteralPath $ResolvedLogFile -Append -Encoding utf8
   Append-LogLine -Message "Hermes silent install finished successfully."
   Write-StatusSnapshot -State "succeeded" -Ok $true -ExitCode 0 -Message "Hermes install completed successfully."
   exit 0

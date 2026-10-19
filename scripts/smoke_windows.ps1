@@ -19,6 +19,7 @@ foreach ($Name in @('Path', 'HERMES_HOME', 'HERMES_OFFLINE_HOME', 'ZHANCLAW_BASE
 }
 
 function Expand-Bundle([string] $Zip, [string] $Destination) {
+  Write-Host ('Extracting ' + $Zip)
   New-Item -ItemType Directory -Path $Destination | Out-Null
   & $SystemPython -m zipfile -e $Zip $Destination
   if ($LASTEXITCODE -ne 0) { throw 'Archive extraction failed.' }
@@ -52,6 +53,7 @@ function Set-SmokeContext([string] $Name) {
 }
 
 function Install-Portable([string] $Bundle, [string] $Label) {
+  Write-Host ('Starting ' + $Label + ' offline install.')
   $Status = Join-Path $Work ($Label + '-status.json')
   $Log = Join-Path $Work ($Label + '-install.log')
   & $Shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Bundle 'installers\install_windows_silent.ps1') -Portable -StatusFile $Status -LogFile $Log

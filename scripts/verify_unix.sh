@@ -81,4 +81,4 @@ for mirror_env_name in PIP_INDEX_URL UV_DEFAULT_INDEX HF_ENDPOINT PLAYWRIGHT_DOW
   }
 done
 
-"$HERMES_BIN" version
+"$HERMES_BIN" --version

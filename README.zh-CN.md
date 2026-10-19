@@ -241,7 +241,7 @@ uninstall.cmd
 验证安装：
 
 ```powershell
-hermes version
+hermes --version
 hermes dashboard
 ```
 
@@ -276,7 +276,7 @@ HERMES_PORTABLE_MODE=1 ./installers/install_unix.sh
 重新打开终端后验证：
 
 ```bash
-hermes version
+hermes --version
 hermes dashboard
 ```
 
