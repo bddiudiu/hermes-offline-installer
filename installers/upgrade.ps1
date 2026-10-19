@@ -192,7 +192,7 @@ function Test-CommandOwnsPath([string] $Line, [string] $Root) {
     # .NET Framework IsPathRooted itself throws for those characters on PS5.1.
     try {
       if ([IO.Path]::IsPathRooted($Candidate) -and (Test-Within $Candidate $Root)) { return $true }
-    } catch [ArgumentException] {}
+    } catch {}
   }
   return $false
 }

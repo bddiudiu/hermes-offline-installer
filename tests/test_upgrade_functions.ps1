@@ -109,6 +109,7 @@ try {
 
   $Unrelated = (Quote-Argument 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe') + ' -Command ' + (Quote-Argument 'Write-Output "unrelated script argument"')
   Assert-Condition (-not (Test-CommandOwnsPath $Unrelated $script:InstallRoot)) 'quoted non-path command arguments do not break ownership inspection'
+  Assert-Condition (-not (Test-CommandOwnsPath ($Unrelated + ' C:\') $script:InstallRoot)) 'volume-root arguments are unrelated to the nested runtime'
   $Mixed = $Unrelated + ' ' + (Quote-Argument ('--home=' + $script:InstallRoot))
   Assert-Condition (Test-CommandOwnsPath $Mixed $script:InstallRoot) 'owned path is still detected after a non-path argument'
   Assert-Condition (-not (Test-CommandOwnsPath ($Unrelated + ' ' + (Quote-Argument ($script:InstallRoot + '-other'))) $script:InstallRoot)) 'unrelated sibling path does not claim runtime ownership'
