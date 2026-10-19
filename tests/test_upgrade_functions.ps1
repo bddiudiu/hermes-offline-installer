@@ -70,6 +70,7 @@ try {
 
   $script:InstallRoot = Join-Path $TestRoot '安装 with spaces'
   $script:Runtime = Join-Path $script:InstallRoot 'runtime'
+  $script:HermesDataHome = Join-Path $TestRoot 'preserved home'
   [IO.Directory]::CreateDirectory($script:Runtime) | Out-Null
   Assert-Condition (Test-Within (Join-Path $script:Runtime 'venv\Scripts\python.exe') $script:Runtime) 'runtime child is contained'
   Assert-Condition (-not (Test-Within ($script:Runtime + '-unrelated\python.exe') $script:Runtime)) 'runtime sibling is not contained by prefix'
