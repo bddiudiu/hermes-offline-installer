@@ -30,6 +30,15 @@ class SourceDistributionTests(unittest.TestCase):
         self.assertIn("websockets==15.0.1", build_wheelhouse.OFFLINE_RUNTIME_REQUIREMENTS)
         self.assertIn("setuptools==83.0.0", build_wheelhouse.BUILD_REQUIREMENTS)
 
+    def test_required_wheels_normalize_dotted_distribution_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            wheels = Path(temp)
+            (wheels / "ruamel.yaml-0.18.16-py3-none-any.whl").write_bytes(b"fixture")
+            (wheels / "PyYAML-6.0.3-cp314-cp314-win_amd64.whl").write_bytes(b"fixture")
+            build_wheelhouse.validate_required_wheels(wheels, ["ruamel_yaml", "pyyaml"])
+            with self.assertRaisesRegex(SystemExit, "openai"):
+                build_wheelhouse.validate_required_wheels(wheels, ["openai"])
+
     def test_release_tag_normalization_adds_missing_v_prefix(self) -> None:
         self.assertEqual(resolve_hermes_source.normalize_release_tag("2026.8.27"), "v2026.8.27")
         self.assertEqual(resolve_hermes_source.normalize_release_tag("v2026.8.27"), "v2026.8.27")

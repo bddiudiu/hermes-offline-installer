@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from manifest import HERMES_SOURCE, PYTHON_VERSION, write_manifest
+from read_hermes_version import normalize_distribution_name
 
 DEFAULT_HERMES_EXTRAS = "all"
 PYTHON_DOWNLOAD_VERSION = "".join(PYTHON_VERSION.split(".")[:2])
@@ -365,17 +366,12 @@ def remove_distribution_artifacts(output: Path, distribution: str) -> None:
 
 def validate_required_wheels(output: Path, distributions: list[str]) -> None:
     missing = []
+    available = {
+        normalize_distribution_name(artifact.name.split("-", 1)[0])
+        for artifact in output.iterdir() if artifact.is_file() and artifact.suffix == ".whl"
+    }
     for distribution in distributions:
-        prefixes = {
-            distribution.replace("_", "-").lower(),
-            distribution.replace("-", "_").lower(),
-        }
-        found = any(
-            artifact.suffix == ".whl"
-            and any(artifact.name.lower().startswith(f"{prefix}-") for prefix in prefixes)
-            for artifact in output.iterdir()
-        )
-        if not found:
+        if normalize_distribution_name(distribution) not in available:
             missing.append(distribution)
     if missing:
         raise SystemExit(
