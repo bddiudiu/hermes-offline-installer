@@ -150,8 +150,24 @@ try {
   $Old = Set-SmokeContext 'existing'
   Install-Portable $LegacyBundle 'legacy'
   Verify-Runtime $Old '0.21.5'
-  # Exercise preservation of a non-default selected model and a user-owned file.
-  & $Old.Python -c "import os; from pathlib import Path; import yaml; p=Path(os.environ['HERMES_HOME'])/'config.yaml'; c=yaml.safe_load(p.read_text(encoding='utf-8')); c['model']['default']='upgrade-fixture-model'; c['providers']['zhan_ai']['models'].append('upgrade-fixture-model'); c['security']={'allow_lazy_installs':False}; p.write_text(yaml.safe_dump(c,sort_keys=False),encoding='utf-8')"
+  # Missing defaults must be filled without changing explicit settings or credentials.
+  $ConfigFixture = @'
+import os
+from pathlib import Path
+import yaml
+p = Path(os.environ['HERMES_HOME']) / 'config.yaml'
+c = yaml.safe_load(p.read_text(encoding='utf-8'))
+c['model']['default'] = 'upgrade-fixture-model'
+c['providers']['zhan_ai']['models'].append('upgrade-fixture-model')
+c['terminal']['timeout'] = 73
+c['compression'] = {'enabled': False}
+c['memory'] = {'user_profile_enabled': False}
+c['mcp_servers'] = {'upgrade-fixture': {'enabled': False, 'command': 'fixture-mcp', 'args': []}}
+c['plugins'] = {'disabled': ['upgrade-fixture'], 'hook_callback_timeout': 7}
+c.pop('security', None)
+p.write_text(yaml.safe_dump(c, sort_keys=False), encoding='utf-8')
+'@
+  & $Old.Python -c $ConfigFixture
   if ($LASTEXITCODE -ne 0) { throw 'Legacy configuration fixture failed.' }
   $UserAsset = Join-Path $Old.Data 'USER.md'
   [IO.File]::WriteAllText($UserAsset, 'preserve this user-owned fixture', (New-Object Text.UTF8Encoding($false)))
@@ -189,8 +205,30 @@ try {
   & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped
   if ($LASTEXITCODE -ne 0 -or (Read-Journal $Old).phase -ne 'committed') { throw 'Legacy-to-new offline upgrade failed.' }
   Verify-Runtime $Old $Version
-  & $Old.Python -c "import os; from pathlib import Path; import yaml; h=Path(os.environ['HERMES_HOME']); c=yaml.safe_load((h/'config.yaml').read_text(encoding='utf-8')); assert c['model']['default']=='upgrade-fixture-model'; assert 'upgrade-fixture-model' in c['providers']['zhan_ai']['models']; assert (h/'USER.md').read_text()=='preserve this user-owned fixture'"
-  if ($LASTEXITCODE -ne 0) { throw 'Upgrade did not preserve model selection and user assets.' }
+  $ConfigVerification = @'
+import os
+from pathlib import Path
+import yaml
+h = Path(os.environ['HERMES_HOME'])
+c = yaml.safe_load((h / 'config.yaml').read_text(encoding='utf-8'))
+assert c['model']['default'] == 'upgrade-fixture-model'
+assert c['model']['supports_vision'] is True
+assert 'upgrade-fixture-model' in c['providers']['zhan_ai']['models']
+assert c['terminal']['timeout'] == 73
+assert c['terminal']['cwd'] == '.'
+assert c['terminal']['home_mode'] == 'auto'
+assert c['compression']['enabled'] is False
+assert c['memory']['user_profile_enabled'] is False
+assert c['memory']['memory_enabled'] is True
+assert c['security']['allow_lazy_installs'] is False
+assert c['platform_toolsets']['cli'] == ['hermes-cli']
+assert c['platforms']['api_server']['extra']['host'] == '127.0.0.1'
+assert c['mcp_servers'] == {'upgrade-fixture': {'enabled': False, 'command': 'fixture-mcp', 'args': []}}
+assert c['plugins'] == {'disabled': ['upgrade-fixture'], 'hook_callback_timeout': 7}
+assert (h / 'USER.md').read_text() == 'preserve this user-owned fixture'
+'@
+  & $Old.Python -c $ConfigVerification
+  if ($LASTEXITCODE -ne 0) { throw 'Upgrade configuration preservation/default merge verification failed.' }
   foreach ($Name in $SavedUserEnv.Keys) {
     if ([Environment]::GetEnvironmentVariable($Name, 'User') -ne $SavedUserEnv[$Name]) { throw ('Portable validation changed user environment: ' + $Name) }
   }

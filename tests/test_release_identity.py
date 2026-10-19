@@ -133,7 +133,8 @@ class ReleaseIdentityTests(unittest.TestCase):
         (bundle / "manifest.json").write_text(json.dumps(manifest))
         for name in ("hermes-agent/hermes_cli/main.py", "hermes-agent/tools/skills_sync.py",
                      "hermes-resources/web_dist/index.html", "hermes-resources/tui_dist/dist/entry.js",
-                     "scripts/upgrade_support.py", "installers/upgrade.ps1", "runtime/python/python.exe"):
+                     "scripts/upgrade_support.py", "installers/upgrade.ps1", "runtime/python/python.exe",
+                     "templates/config.yaml"):
             path = bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture")

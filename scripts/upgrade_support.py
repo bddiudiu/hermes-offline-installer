@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import hashlib
 import importlib.metadata
 import io
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -90,7 +92,7 @@ def verify_bundle(bundle: Path, installed_version: str, allow_same: bool = False
         "hermes-agent/hermes_cli/main.py", "hermes-agent/tools/skills_sync.py",
         "hermes-resources/web_dist/index.html", "hermes-resources/tui_dist/dist/entry.js",
         "wheelhouse/requirements.txt", "wheelhouse/hermes-editable-requirement.txt",
-        "scripts/upgrade_support.py", "installers/upgrade.ps1",
+        "scripts/upgrade_support.py", "installers/upgrade.ps1", "templates/config.yaml",
     ):
         if relative not in files:
             raise UpgradeError("Incomplete offline bundle layout")
@@ -109,7 +111,7 @@ def verify_bundle(bundle: Path, installed_version: str, allow_same: bool = False
     return {"version": target, "files": len(files)}
 
 
-def read_config(home: Path) -> dict:
+def parse_config(text: str) -> dict:
     import yaml
     # Duplicate keys can hide a model/provider definition; refuse before migration.
     class UniqueLoader(yaml.SafeLoader):
@@ -123,10 +125,14 @@ def read_config(home: Path) -> dict:
             result[key] = loader.construct_object(value_node, deep=deep)
         return result
     UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
-    cfg = yaml.load((home / "config.yaml").read_text(encoding="utf-8-sig"), Loader=UniqueLoader)
+    cfg = yaml.load(text, Loader=UniqueLoader)
     if not isinstance(cfg, dict):
         raise UpgradeError("config.yaml must be a mapping")
     return cfg
+
+
+def read_config(home: Path) -> dict:
+    return parse_config((home / "config.yaml").read_text(encoding="utf-8-sig"))
 
 
 def home_profiles(home: Path) -> list[Path]:
@@ -169,8 +175,102 @@ def validate_model_config(cfg: dict) -> dict:
 
 
 def protected_config(cfg: dict) -> dict:
-    # Multi-model maps and lists remain maps and lists; never normalize a user's selection.
-    return {k: cfg.get(k) for k in ("model", "providers", "models") if k in cfg}
+    # These sections are user-owned in their entirety, including their absence.
+    return {k: cfg[k] for k in (
+        "model", "providers", "models", "custom_providers", "mcp_servers", "mcp",
+        "plugins", "plugin_config", "plugin_settings", "credentials", "secrets",
+    ) if k in cfg}
+
+
+def config_contains(original: object, current: object, *, exact: bool = False) -> bool:
+    """Compare values without treating false/0, null/missing or list/map as equivalent."""
+    if isinstance(original, dict):
+        return (isinstance(current, dict)
+                and (not exact or original.keys() == current.keys())
+                and all(key in current and config_contains(value, current[key], exact=exact)
+                        for key, value in original.items()))
+    if isinstance(original, list):
+        return (isinstance(current, list) and len(original) == len(current)
+                and all(config_contains(a, b, exact=True) for a, b in zip(original, current)))
+    return type(original) is type(current) and original == current
+
+
+def assert_config_preserved(before: dict, after: dict) -> None:
+    if not config_contains(protected_config(before), protected_config(after), exact=True):
+        raise UpgradeError("Upgrade changed protected model/provider, credential, MCP or plugin settings; rollback required")
+    # Only Hermes owns the schema stamp. Every other existing key/value is retained.
+    original = {key: value for key, value in before.items() if key != "_config_version"}
+    if not config_contains(original, after):
+        raise UpgradeError("Upgrade changed an existing config value; rollback required")
+
+
+# Reviewed runtime-only additions. Do not copy model/provider defaults, credentials,
+# MCP or plugin definitions from a fresh-install template into an existing profile.
+UPGRADE_DEFAULT_PATHS = (
+    ("platform_toolsets", "cli"),
+    ("terminal", "cwd"), ("terminal", "timeout"), ("terminal", "home_mode"),
+    ("platforms", "api_server", "extra", "host"),
+    ("compression", "enabled"),
+    ("memory", "memory_enabled"), ("memory", "user_profile_enabled"),
+    ("security", "allow_lazy_installs"),
+)
+
+
+def merge_config_defaults(home: Path, template: Path) -> list[str]:
+    """Add only absent reviewed paths, preserving explicit null/false/empty values."""
+    from ruamel.yaml import YAML
+    from ruamel.yaml.comments import CommentedMap
+
+    path = home / "config.yaml"
+    original_bytes = path.read_bytes()
+    original_text = original_bytes.decode("utf-8-sig")
+    before = parse_config(original_text)
+    defaults = parse_config(template.read_text(encoding="utf-8-sig"))
+    yaml = YAML(typ="rt")
+    # Match the YAML 1.1 semantics used by Hermes' PyYAML reader (e.g. yes, 0755).
+    yaml.version = (1, 1)
+    yaml.preserve_quotes = True
+    yaml.line_break = "\r\n" if b"\r\n" in original_bytes else "\n"
+    current = yaml.load(original_text)
+    added = []
+    for keys in UPGRADE_DEFAULT_PATHS:
+        value = defaults
+        for key in keys:
+            if not isinstance(value, dict) or key not in value:
+                raise UpgradeError("Upgrade template is missing a required runtime default")
+            value = value[key]
+        node = current
+        for key in keys[:-1]:
+            if key not in node:
+                node[key] = CommentedMap()
+            node = node[key]
+            if not isinstance(node, dict):
+                break  # A present null, scalar or list is an explicit user choice.
+        else:
+            if keys[-1] not in node:
+                node[keys[-1]] = copy.deepcopy(value)
+                added.append(".".join(keys))
+    if not added:
+        return []
+    output = io.StringIO()
+    yaml.dump(current, output)
+    rendered = output.getvalue()
+    # Also catches alias side effects and serializer changes before touching the file.
+    assert_config_preserved(before, parse_config(rendered))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=home,
+                                         prefix=".config-upgrade-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(rendered)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, path.stat().st_mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return added
 
 
 def resolved_env(home: Path) -> dict[str, str]:
@@ -215,7 +315,7 @@ def installed_version() -> str:
         raise UpgradeError(str(exc)) from exc
 
 
-def migrate(home: Path, backup: Path) -> dict:
+def migrate(home: Path, backup: Path, template: Path) -> dict:
     before = read_config(backup)
     env_before = resolved_env(backup)
     # Use the new official migration engine, in a fresh process for EACH profile.
@@ -225,15 +325,17 @@ def migrate(home: Path, backup: Path) -> dict:
     if result.get("warnings"):
         raise UpgradeError("Official config migration reported warnings; rollback required for review")
     after = read_config(home)
-    if protected_config(before) != protected_config(after):
-        raise UpgradeError("Migration changed model/provider selections; rollback required")
+    assert_config_preserved(before, after)
     # .env formatting may be normalized officially; semantic credential values must remain.
     env_after = resolved_env(home)
     from dotenv import dotenv_values
-    for key in dotenv_values(backup / ".env"):
-        if env_before.get(key) != env_after.get(key):
+    original_env = dotenv_values(backup / ".env")
+    current_env = dotenv_values(home / ".env")
+    for key, value in original_env.items():
+        if key not in current_env or current_env[key] != value or env_before.get(key) != env_after.get(key):
             raise UpgradeError("Migration changed an existing .env value; rollback required")
-    return {"migrated": True}
+    added = merge_config_defaults(home, template)
+    return {"migrated": True, "config_defaults_added": added}
 
 
 def verify_runtime(source: Path, expected: str, home: Path) -> dict:
@@ -399,12 +501,11 @@ def pristine_bundled_skills(backup: Path) -> set[Path]:
 
 def check_preserved(home: Path, backup: Path) -> dict:
     # Runtime-generated databases/logs may legitimately change. User-authored assets may not.
-    if protected_config(read_config(home)) != protected_config(read_config(backup)):
-        raise UpgradeError("Startup changed model/provider settings")
+    assert_config_preserved(read_config(backup), read_config(home))
     from dotenv import dotenv_values
     original_env = dotenv_values(backup / ".env")
     current_env = dotenv_values(home / ".env")
-    if any(current_env.get(key) != value for key, value in original_env.items()):
+    if any(key not in current_env or current_env[key] != value for key, value in original_env.items()):
         raise UpgradeError("Startup changed an existing .env value")
     managed_skills = pristine_bundled_skills(backup)
     protected = ("skills", "plugins", "memories", "SOUL.md", "USER.md", "AGENTS.md")
@@ -430,6 +531,7 @@ def main() -> int:
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--template", type=Path)
     parser.add_argument("--version", default="")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--allow-same", action="store_true")
@@ -440,7 +542,9 @@ def main() -> int:
         elif args.action == "inspect":
             result = inspect_home(args.home)
         elif args.action == "migrate":
-            result = migrate(args.home, args.backup)
+            if args.template is None:
+                raise UpgradeError("Config migration requires the verified bundle template")
+            result = migrate(args.home, args.backup, args.template)
         elif args.action == "verify":
             result = verify_runtime(args.source, args.version, args.home)
         elif args.action == "endpoint":

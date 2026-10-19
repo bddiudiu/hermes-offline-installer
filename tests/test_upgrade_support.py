@@ -43,6 +43,7 @@ class BundleValidationTests(unittest.TestCase):
             "wheelhouse/hermes-editable-requirement.txt": ".[all,web]\n",
             "scripts/upgrade_support.py": "# fixture\n",
             "installers/upgrade.ps1": "# fixture\n",
+            "templates/config.yaml": "terminal: {timeout: 180}\n",
             "runtime/python/python.exe": "fixture, never executed\n",
         }
         for relative, content in files.items():
@@ -195,6 +196,10 @@ class HomeAndMigrationTests(unittest.TestCase):
         self.backup = self.root / "backup"
         self.home.mkdir()
         self.backup.mkdir()
+        self.template = ROOT / "templates/config.yaml"
+        merger = mock.patch.object(upgrade, "merge_config_defaults", return_value=[])
+        merger.start()
+        self.addCleanup(merger.stop)
         config_reader = mock.patch.object(upgrade, "read_config", return_value={})
         # Tests exercising the YAML parser explicitly stop this stdlib-only default.
         self.default_config_reader = config_reader
@@ -286,7 +291,8 @@ class HomeAndMigrationTests(unittest.TestCase):
         migration = mock.Mock(return_value={"warnings": []})
         after = {**copy.deepcopy(self.config), "new_official_default": True}
         with self.fake_migration_modules(migration), mock.patch.object(upgrade, "read_config", side_effect=[self.config, after]):
-            self.assertEqual(upgrade.migrate(self.home, self.backup), {"migrated": True})
+            self.assertEqual(upgrade.migrate(self.home, self.backup, self.template),
+                             {"migrated": True, "config_defaults_added": []})
         migration.assert_called_once_with(interactive=False, quiet=True)
 
     def test_migration_rejects_changed_default_list_or_provider_map(self) -> None:
@@ -295,8 +301,8 @@ class HomeAndMigrationTests(unittest.TestCase):
                 after = copy.deepcopy(self.config)
                 after[field] = "replacement"
                 with self.fake_migration_modules(mock.Mock(return_value={})), mock.patch.object(upgrade, "read_config", side_effect=[self.config, after]):
-                    with self.assertRaisesRegex(upgrade.UpgradeError, "model/provider selections"):
-                        upgrade.migrate(self.home, self.backup)
+                    with self.assertRaisesRegex(upgrade.UpgradeError, "protected model/provider"):
+                        upgrade.migrate(self.home, self.backup, self.template)
 
     def test_migration_rejects_warnings_without_logging_their_contents(self) -> None:
         secret = "private-key-should-never-appear"
@@ -307,13 +313,13 @@ class HomeAndMigrationTests(unittest.TestCase):
         stdout, stderr = io.StringIO(), io.StringIO()
         with self.fake_migration_modules(migration), mock.patch.object(upgrade, "read_config", return_value=self.config), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             with self.assertRaisesRegex(upgrade.UpgradeError, "reported warnings"):
-                upgrade.migrate(self.home, self.backup)
+                upgrade.migrate(self.home, self.backup, self.template)
         self.assertNotIn(secret, stdout.getvalue() + stderr.getvalue())
 
     def test_migration_rejects_changed_existing_env_value(self) -> None:
         with self.fake_migration_modules(mock.Mock(return_value={})), mock.patch.object(upgrade, "read_config", return_value=self.config), mock.patch.object(upgrade, "resolved_env", side_effect=[{"EXISTING_KEY": "before"}, {"EXISTING_KEY": "after"}]):
             with self.assertRaisesRegex(upgrade.UpgradeError, "existing .env value"):
-                upgrade.migrate(self.home, self.backup)
+                upgrade.migrate(self.home, self.backup, self.template)
 
     @unittest.skipUnless(importlib.util.find_spec("dotenv"), "python-dotenv is required for .env parser tests")
     def test_env_value_comparison_allows_equivalent_formatting(self) -> None:
@@ -325,7 +331,7 @@ class HomeAndMigrationTests(unittest.TestCase):
 
     def test_startup_validation_rejects_changed_model_and_env_values(self) -> None:
         with self.fake_migration_modules(mock.Mock(return_value={})), mock.patch.object(upgrade, "read_config", side_effect=[{"model": "changed"}, {"model": "original"}]):
-            with self.assertRaisesRegex(upgrade.UpgradeError, "Startup changed model/provider"):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "protected model/provider"):
                 upgrade.check_preserved(self.home, self.backup)
         dotenv = types.ModuleType("dotenv")
         dotenv.dotenv_values = lambda path: {"KEY": "original" if path.parent == self.backup else "changed"}

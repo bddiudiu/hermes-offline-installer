@@ -79,6 +79,21 @@ exit /b %UPGRADE_EXIT%
 - `.env` 中已有的凭据和变量值；官方迁移允许调整文件格式，但已有值的语义必须保持不变。不要把 `.env` 粘贴到工单或公开日志中
 - 完整 `HERMES_HOME`，包括 profiles、skills、plugins、会话、状态、日志、SQLite 数据库以及同目录的 WAL / SHM 文件
 
+升级会在官方配置迁移之后，为根 home 和每个命名 profile **补齐缺失的运行配置**。值来自当前包内已校验的 `templates/config.yaml`，目前包括：
+
+- `platform_toolsets.cli`
+- `terminal.cwd`、`terminal.timeout`、`terminal.home_mode`
+- `platforms.api_server.extra.host`
+- `compression.enabled`
+- `memory.memory_enabled`、`memory.user_profile_enabled`
+- `security.allow_lazy_installs`
+
+只有键不存在时才补入；已有的 `false`、`0`、空字符串、空列表和 `null` 都保留，已有父节点为非映射类型时不替换该节点。列表不追加、不合并。重复执行不会重写已补齐的配置。缺少 `security.allow_lazy_installs` 时补为 `false`，已有 `true` 则继续保留。
+
+模型、服务商、凭据、MCP 和插件配置整段保持原样，不从首次安装模板引入 `qwen3`、`zhan_ai`、模型能力或 `api_mode`。因此已有 `supports_vision: true` 也不会被自动删除。后续增加可补齐项时，须在升级辅助脚本中明确列出并增加保护测试，不能把整份首次安装模板直接递归合并进用户配置。
+
+写入前验证现有值未改变，以临时文件原子替换配置；升级后再次检查所有原有配置值及敏感配置整段，只有 Hermes 管理的 `_config_version` 允许正常更新。官方迁移若改变已有设置或报告警告，升级失败并走完整回滚，不默默接受冲突。YAML 注释与引号由补齐步骤尽量保留，但上游官方迁移本身可能调整排版。
+
 home 的一致性备份在相关进程停止后进行。失败回滚使用完整 home 快照，而不只是恢复 `config.yaml` 或单个数据库文件，这样新版本启动时发生的数据迁移也能回退。home 外自定义存放的数据和外部数据库不在这个范围内，应由维护人员另行备份。
 
 内置 skills 使用上游官方同步逻辑：只有与旧包完全一致、没有任何用户修改的完整 skill 目录可更新到新版；自定义或已修改的 skill 文件继续受保护。官方同步维护 `.bundled_manifest`，升级检查不会把这份同步元数据的正常更新当成用户文件丢失。
@@ -123,7 +138,7 @@ upgrade.cmd "C:\old\install" -Recover
 
 Hermes 0.22.2 的真实版本由包内 `install-stamp.json` 提供；其 Python distribution metadata 为 `0.0.0`，不作为升级目标版本。升级器同时校验源码身份、清单、安装元数据和运行时身份，仍支持旧版 0.21.5 的版本读取方式。
 
-发布资产另外提供 `config.yaml` 及 SHA-256，与 ZIP 并列放置。ZIP 内保留首次安装所需的默认模板；升级继续保留旧 home 的配置，不用新模板重置已有模型。
+发布资产另外提供 `config.yaml` 及 SHA-256，与 ZIP 并列放置。ZIP 内保留首次安装所需的默认模板；升级仅从中补齐上述缺失运行项，继续保留旧 home 的模型、凭据、MCP、插件及其他已有设置。
 
 GitHub Actions 的 `update_root_latest` 是默认 `false` 的布尔输入。常规构建会先上传安装包、校验文件等产物，全部成功后再上传版本目录中的元数据：
 

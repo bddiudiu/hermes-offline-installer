@@ -96,7 +96,7 @@ Windows 安装器会尽可能停止正在运行的 Hermes 进程，刷新离线 
 
 其中用户自定义安装位置时只需要提前设置 `HERMES_HOME` 和 `HERMES_OFFLINE_HOME`。Windows 会把上表 12 个变量写入当前用户环境，并把 `%HERMES_OFFLINE_HOME%\bin` 追加到当前用户 `Path`；当检测到旧版本写入的 `%USERPROFILE%\.hermes` 或 `%USERPROFILE%\.hermes-offline` 默认变量时，安装器会把它们视为 legacy 默认值并改用新的产品目录，同时清理旧 `%USERPROFILE%\.hermes-offline\bin` 的 PATH 入口。Unix 不修改 shell 启动文件，而是在生成的 `~/.local/bin/hermes` shim 中导出 Hermes 相关变量。
 
-如需升级已有 Windows 离线安装，将新版 ZIP 解压到独立目录，在该目录先运行 `upgrade.cmd "C:\old\install" -WhatIf`，检查计划后再运行 `upgrade.cmd "C:\old\install"`。路径应为包含 `runtime` 和 `bin` 的旧 `HERMES_OFFLINE_HOME`。专用升级流程保留已有模型列表、provider 映射、默认模型和 `.env`，备份完整 Hermes home，并支持失败回滚与中断事务恢复。升级前先停止外部客户端和 supervisor，实际停止后才使用 `-SupervisorStopped`。`-HermesHome`、`-KeepStopped`、`-Recover`、权限要求与验证范围详见 [Windows 升级指南](docs/upgrade-windows.zh-CN.md)。首次安装继续使用 `install.cmd`。
+如需升级已有 Windows 离线安装，将新版 ZIP 解压到独立目录，在该目录先运行 `upgrade.cmd "C:\old\install" -WhatIf`，检查计划后再运行 `upgrade.cmd "C:\old\install"`。路径应为包含 `runtime` 和 `bin` 的旧 `HERMES_OFFLINE_HOME`。专用升级流程为每个 profile 补齐缺失的运行配置，保留所有已有值以及模型、provider、凭据、MCP 和插件设置，备份完整 Hermes home，并支持失败回滚与中断事务恢复。升级前先停止外部客户端和 supervisor，实际停止后才使用 `-SupervisorStopped`。`-HermesHome`、`-KeepStopped`、`-Recover`、权限要求与验证范围详见 [Windows 升级指南](docs/upgrade-windows.zh-CN.md)。首次安装继续使用 `install.cmd`。
 
 如果安装时提示旧 runtime 或旧 `hermes.exe` shim 正被占用，请关闭正在运行的 Hermes 或 ClawPanel 进程后重新安装。Windows 离线安装会把 `hermes.exe` 包装器放到 `%HERMES_OFFLINE_HOME%\bin`，兼容只识别 `.exe` 的调用方；该包装器会转发到同目录的 `hermes.cmd`，因此仍会使用 `hermes.cmd` 中设置的 `HERMES_PYTHON` 和 bundled resources 环境变量。
 

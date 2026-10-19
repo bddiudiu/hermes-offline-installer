@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install PyYAML==6.0.3 python-dotenv==1.2.2
+          python -m pip install PyYAML==6.0.3 python-dotenv==1.2.2 ruamel.yaml==0.18.16
           python -m py_compile packaging/build_wheelhouse.py packaging/build_bundle.py scripts/upgrade_support.py scripts/upload_oss.py
           python -m unittest discover -s tests -p "test_*.py"
 

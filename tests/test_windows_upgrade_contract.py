@@ -169,6 +169,7 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
         self.assertIn("'--no-build-isolation', '-e', $Editable", normal)
         self.assertLess(normal.index("@('verify', '--source', $SourceTree"), normal.index("Write-Journal 'migrating-home'"))
         self.assertIn("foreach ($Profile in @($Inspect.homes))", normal)
+        self.assertIn("'--template', (Join-Path $script:Runtime 'templates\\config.yaml')", normal)
 
     def test_real_health_and_asset_validation_precede_keep_stopped_or_commit(self) -> None:
         validation = self.main.split("Write-Journal 'validating'", 1)[1]

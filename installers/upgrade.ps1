@@ -578,7 +578,8 @@ namespace HermesUpgrade { public static class Native {
     $Relative = $Profile.Substring($script:HermesDataHome.Length).TrimStart('\')
     $SavedProfile = Join-Path $Backup 'home'
     if ($Relative) { $SavedProfile = Join-Path $SavedProfile $Relative }
-    Invoke-Helper $VenvPython @('migrate', '--home', $Profile, '--backup', $SavedProfile) | Out-Null
+    $Migration = Invoke-Helper $VenvPython @('migrate', '--home', $Profile, '--backup', $SavedProfile, '--template', (Join-Path $script:Runtime 'templates\config.yaml'))
+    Write-Host ('Existing configuration preserved; added ' + @($Migration.config_defaults_added).Count + ' missing runtime defaults.')
     Invoke-Helper $VenvPython @('sync-skills', '--home', $Profile) | Out-Null
   }
   Set-ProcessEnv 'HERMES_HOME' $script:HermesDataHome
