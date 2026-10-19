@@ -64,6 +64,18 @@ function Set-ProcessEnv([string] $Name, [AllowNull()] [string] $Value) {
   }
   [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
 }
+function Get-FileDigest([string] $Path) {
+  # PowerShell 5.1 Get-FileHash resolves paths through a ShouldProcess-aware
+  # property accessor, which yields no hash under inherited -WhatIf. Read the
+  # stream directly without changing the caller's dry-run preference.
+  $Stream = [IO.File]::OpenRead($Path)
+  try {
+    $Algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+      return [BitConverter]::ToString($Algorithm.ComputeHash($Stream)).Replace('-', '').ToLowerInvariant()
+    } finally { $Algorithm.Dispose() }
+  } finally { $Stream.Dispose() }
+}
 function Assert-BundleIntegrity {
   $InventoryPath = Join-Path $script:Source 'upgrade-manifest.json'
   $Inventory = Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -77,7 +89,7 @@ function Assert-BundleIntegrity {
     $Path = Full-Path (Join-Path $script:Source $Entry.Name)
     if (-not (Test-Within $Path $script:Source) -or $Seen.ContainsKey($Path)) { throw 'Checksum inventory escaped or duplicated a path.' }
     $Seen[$Path] = $true
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Entry.Value) { throw 'Bundle checksum mismatch. Re-extract the trusted release ZIP.' }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-FileDigest $Path) -ne $Entry.Value) { throw 'Bundle checksum mismatch. Re-extract the trusted release ZIP.' }
   }
 }
 function Invoke-Helper([string] $Python, [string[]] $Arguments) {

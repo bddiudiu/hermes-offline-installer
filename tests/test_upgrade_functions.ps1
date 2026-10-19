@@ -14,7 +14,8 @@ if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
 $SelectedFunctions = @(
   'Full-Path', 'Test-Within', 'Assert-Separate', 'Assert-NoLinks',
   'Quote-Argument', 'Split-Command', 'Get-RestartSpecs', 'Assert-RestartSpec',
-  'Write-Journal', 'New-PrivateDirectory', 'Copy-Tree'
+  'Write-Journal', 'New-PrivateDirectory', 'Copy-Tree',
+  'Get-FileDigest', 'Assert-BundleIntegrity'
 )
 $Definitions = @($Ast.FindAll({ param($Node) $Node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))
 foreach ($Name in $SelectedFunctions) {
@@ -78,6 +79,25 @@ try {
   Assert-NoLinks $script:InstallRoot
   Assert-NoLinks (Join-Path $TestRoot 'does-not-exist\home') -AllowMissing
   $script:Passed += 2
+
+  $script:Source = Join-Path $TestRoot '只读 bundle'
+  $Payload = Join-Path $script:Source 'config [1].yaml'
+  Write-Fixture $Payload ([Text.Encoding]::ASCII.GetBytes('abc'))
+  $BundleInventory = @{ schema = 1; algorithm = 'sha256'; files = @{ 'config [1].yaml' = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' } }
+  Write-Fixture (Join-Path $script:Source 'upgrade-manifest.json') ([Text.Encoding]::UTF8.GetBytes(($BundleInventory | ConvertTo-Json -Depth 5)))
+  $SavedWhatIf = $WhatIfPreference
+  try {
+    $WhatIfPreference = $true
+    Assert-BundleIntegrity
+    $script:Passed++
+    Assert-Condition $WhatIfPreference 'bundle integrity preflight retains WhatIf preference'
+  } finally { $WhatIfPreference = $SavedWhatIf }
+  Assert-Condition (@(Get-ChildItem -LiteralPath $script:Source -Recurse -Force -File).Count -eq 2) 'read-only bundle validation creates no files'
+  Write-Fixture $Payload ([Text.Encoding]::ASCII.GetBytes('tampered'))
+  try {
+    $WhatIfPreference = $true
+    Assert-Throws { Assert-BundleIntegrity } 'WhatIf still rejects a corrupted bundle'
+  } finally { $WhatIfPreference = $SavedWhatIf }
 
   $Arguments = @('', 'with spaces', '中文 目录', 'a"b', 'C:\trailing path\', 'ends\\', 'before\"after', '| & % !', '--literal=a b')
   $Line = (Quote-Argument 'C:\fixture\program.exe') + ' ' + (@($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' ')
