@@ -136,6 +136,17 @@ try {
   $ExpectedHash = ((Get-Content -LiteralPath $LegacyHash -Raw).Trim() -split '\s+')[0]
   if ((Get-FileHash -LiteralPath $LegacyZip -Algorithm SHA256).Hash -ne $ExpectedHash) { throw 'Legacy fixture checksum mismatch.' }
   $LegacyBundle = Expand-Bundle $LegacyZip (Join-Path $Work 'legacy-source')
+  # v0.21.5-92's final version probe uses a removed CLI subcommand. Adapt only
+  # this read-only probe in the extracted test copy; retain its original
+  # runtime, source, dependencies and config to exercise a real legacy upgrade.
+  $LegacyInstaller = Join-Path $LegacyBundle 'installers\install_windows.ps1'
+  $LegacyScript = [IO.File]::ReadAllText($LegacyInstaller)
+  $OldProbe = '& $HermesCmd version'
+  if ([regex]::Matches($LegacyScript, [regex]::Escape($OldProbe)).Count -ne 1) {
+    throw 'Legacy fixture version probe differs from the reviewed installer.'
+  }
+  [IO.File]::WriteAllText($LegacyInstaller, $LegacyScript.Replace($OldProbe, '& $HermesCmd --version'), (New-Object Text.UTF8Encoding($true)))
+  Write-Host 'Adapted the legacy test installer version probe; legacy runtime payload is unchanged.'
   $Old = Set-SmokeContext 'existing'
   Install-Portable $LegacyBundle 'legacy'
   Verify-Runtime $Old '0.21.5'
