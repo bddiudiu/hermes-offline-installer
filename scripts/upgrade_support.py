@@ -10,6 +10,7 @@ import contextlib
 import copy
 import hashlib
 import importlib.metadata
+import importlib.util
 import io
 import json
 import os
@@ -315,6 +316,19 @@ def installed_version() -> str:
         raise UpgradeError(str(exc)) from exc
 
 
+def verify_installed_layout(runtime: Path) -> dict:
+    """Check interpreter/editable bindings without importing config or writing home."""
+    runtime = runtime.resolve()
+    if Path(sys.prefix).resolve() != runtime / "venv":
+        raise UpgradeError("Old Python does not use the deployed runtime/venv")
+    if not Path(sys.base_prefix).resolve().is_relative_to(runtime / "bundle-runtime"):
+        raise UpgradeError("Old Python still depends on a base interpreter outside the deployed runtime")
+    spec = importlib.util.find_spec("hermes_cli")
+    if spec is None or spec.origin is None or Path(spec.origin).resolve().parent != runtime / "hermes-agent" / "hermes_cli":
+        raise UpgradeError("Old Hermes source is outside the deployed runtime/hermes-agent")
+    return {"installed_layout_verified": True}
+
+
 def migrate(home: Path, backup: Path, template: Path) -> dict:
     before = read_config(backup)
     env_before = resolved_env(backup)
@@ -499,7 +513,7 @@ def pristine_bundled_skills(backup: Path) -> set[Path]:
     return result
 
 
-def check_preserved(home: Path, backup: Path) -> dict:
+def check_preserved(home: Path, backup: Path, *, all_files: bool = False) -> dict:
     # Runtime-generated databases/logs may legitimately change. User-authored assets may not.
     assert_config_preserved(read_config(backup), read_config(home))
     from dotenv import dotenv_values
@@ -507,26 +521,32 @@ def check_preserved(home: Path, backup: Path) -> dict:
     current_env = dotenv_values(home / ".env")
     if any(key not in current_env or current_env[key] != value for key, value in original_env.items()):
         raise UpgradeError("Startup changed an existing .env value")
-    managed_skills = pristine_bundled_skills(backup)
+    profiles = home_profiles(backup) if all_files else [backup]
+    if all_files:
+        for profile in profiles[1:]:
+            check_preserved(home / profile.relative_to(backup), profile)
+    managed_skills = set().union(*(pristine_bundled_skills(profile) for profile in profiles))
+    managed_configs = {profile / name for profile in profiles for name in ("config.yaml", ".env")}
+    managed_skill_manifests = {profile / "skills" / ".bundled_manifest" for profile in profiles}
     protected = ("skills", "plugins", "memories", "SOUL.md", "USER.md", "AGENTS.md")
-    for relative in protected:
+    for relative in ((".",) if all_files else protected):
         root = backup / relative
         paths = root.rglob("*") if root.is_dir() else [root]
         for old in paths:
             if old.is_file():
-                if old == backup / "skills" / ".bundled_manifest":
+                if old in managed_skill_manifests or old in managed_configs:
                     continue
                 if any(old.is_relative_to(managed) for managed in managed_skills):
                     continue
                 current = home / old.relative_to(backup)
                 if not current.is_file() or digest(old) != digest(current):
                     raise UpgradeError("An existing user-owned asset changed during validation")
-    return {"user_assets_preserved": True}
+    return {"existing_files_preserved" if all_files else "user_assets_preserved": True}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["bundle", "inspect", "migrate", "verify", "endpoint", "health", "preserved", "compare", "snapshot", "snapshot-check", "model-config", "sync-skills"])
+    parser.add_argument("action", choices=["bundle", "inspect", "installed", "migrate", "verify", "endpoint", "health", "preserved", "preserved-tree", "compare", "snapshot", "snapshot-check", "model-config", "sync-skills"])
     parser.add_argument("--home", type=Path)
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--bundle", type=Path)
@@ -541,6 +561,8 @@ def main() -> int:
             result = verify_bundle(args.bundle, args.version, args.allow_same)
         elif args.action == "inspect":
             result = inspect_home(args.home)
+        elif args.action == "installed":
+            result = verify_installed_layout(args.source)
         elif args.action == "migrate":
             if args.template is None:
                 raise UpgradeError("Config migration requires the verified bundle template")
@@ -562,7 +584,7 @@ def main() -> int:
         elif args.action == "compare":
             result = compare_trees(args.home, args.backup)
         else:
-            result = check_preserved(args.home, args.backup)
+            result = check_preserved(args.home, args.backup, all_files=args.action == "preserved-tree")
         print(json.dumps(result))
         return 0
     except UpgradeError as exc:

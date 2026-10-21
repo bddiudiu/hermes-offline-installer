@@ -12,7 +12,7 @@ $ParseErrors = $null
 $Ast = [Management.Automation.Language.Parser]::ParseFile($UpgradePath, [ref]$Tokens, [ref]$ParseErrors)
 if ($ParseErrors.Count) { throw ($ParseErrors | Out-String) }
 $SelectedFunctions = @(
-  'Full-Path', 'Test-Within', 'Assert-Separate', 'Assert-NoLinks',
+  'Full-Path', 'Test-Within', 'Assert-Separate', 'Assert-NoLinks', 'Assert-InstalledLayout', 'Assert-LauncherBindings',
   'Quote-Argument', 'Split-Command', 'Get-RestartSpecs', 'Assert-RestartSpec',
   'Write-Journal', 'New-PrivateDirectory', 'Copy-Tree',
   'Get-FileDigest', 'Assert-BundleIntegrity', 'Test-CommandOwnsPath', 'Assert-NoSupervisors'
@@ -81,6 +81,31 @@ try {
   Assert-NoLinks (Join-Path $TestRoot 'does-not-exist\home') -AllowMissing
   $script:Passed += 2
 
+  Assert-Throws { Assert-InstalledLayout $script:InstallRoot } 'a partial installed runtime is rejected before mutation'
+  foreach ($Relative in @(
+    'bin\hermes.cmd', 'runtime\venv\Scripts\python.exe', 'runtime\venv\Scripts\hermes.exe',
+    'runtime\venv\pyvenv.cfg', 'runtime\hermes-agent\hermes_cli\main.py',
+    'runtime\commands\launch_windows.ps1', 'runtime\commands\shutdown_windows.ps1',
+    'runtime\commands\uninstall_windows.ps1'
+  )) { Write-Fixture (Join-Path $script:InstallRoot $Relative) ([Text.Encoding]::ASCII.GetBytes('fixture')) }
+  Assert-InstalledLayout $script:InstallRoot
+  $script:Passed++
+  $Bindings = @{
+    HERMES_OFFLINE_HOME = $script:InstallRoot
+    HERMES_PYTHON = (Join-Path $script:InstallRoot 'runtime\venv\Scripts\python.exe')
+  }
+  foreach ($Pair in @(
+    @('HERMES_BUNDLED_SKILLS', 'skills'), @('HERMES_OPTIONAL_SKILLS', 'optional-skills'),
+    @('HERMES_OPTIONAL_MCPS', 'optional-mcps'), @('HERMES_BUNDLED_LOCALES', 'locales'),
+    @('HERMES_BUNDLED_PLUGINS', 'plugins'), @('HERMES_WEB_DIST', 'web_dist'), @('HERMES_TUI_DIR', 'tui_dist')
+  )) { $Bindings[$Pair[0]] = Join-Path (Join-Path $script:InstallRoot 'runtime\hermes-resources') $Pair[1] }
+  $OriginalShim = @($Bindings.GetEnumerator() | ForEach-Object { 'set "{0}={1}"' -f $_.Key, $_.Value }) -join "`r`n"
+  Assert-LauncherBindings $OriginalShim $script:InstallRoot
+  $script:Passed++
+  $WrongShim = $OriginalShim.Replace($Bindings.HERMES_PYTHON, (Join-Path $TestRoot 'deleted-old-bundle\python.exe'))
+  Assert-Throws { Assert-LauncherBindings $WrongShim $script:InstallRoot } 'a launcher pointing to the old extraction is rejected'
+  Assert-Throws { Assert-LauncherBindings ($OriginalShim + "`r`nset `"HERMES_OFFLINE_HOME=C:\other`"") $script:InstallRoot } 'duplicate runtime bindings are rejected'
+
   $script:Source = Join-Path $TestRoot '只读 bundle'
   $Payload = Join-Path $script:Source 'config [1].yaml'
   Write-Fixture $Payload ([Text.Encoding]::ASCII.GetBytes('abc'))
@@ -89,7 +114,9 @@ try {
   $SavedWhatIf = $WhatIfPreference
   try {
     $WhatIfPreference = $true
-    Assert-BundleIntegrity
+    $IntegrityOutput = @(Assert-BundleIntegrity 6>&1) -join "`n"
+    Assert-Condition ($IntegrityOutput.Contains('Verifying SHA-256: 0/1 files.')) 'checksum progress appears before hashing'
+    Assert-Condition ($IntegrityOutput.Contains('Verifying SHA-256: 1/1 files.')) 'checksum progress reports completion'
     $script:Passed++
     Assert-Condition $WhatIfPreference 'bundle integrity preflight retains WhatIf preference'
   } finally { $WhatIfPreference = $SavedWhatIf }

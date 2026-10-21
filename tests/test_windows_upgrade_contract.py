@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -18,6 +19,29 @@ import build_bundle  # noqa: E402
 
 
 class UpgradePackagingTests(unittest.TestCase):
+    def test_windows_zip_has_one_bundle_directory_with_root_and_nested_entrypoints(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            bundle = base / 'hermes-offline-installer-win-x64'
+            installers = bundle / 'installers'
+            installers.mkdir(parents=True)
+            for name in ('upgrade.cmd', 'upgrade.ps1'):
+                shutil.copyfile(ROOT / 'installers' / name, installers / name)
+            build_bundle.write_windows_powershell_scripts_with_bom(bundle)
+            for name in ('upgrade.cmd', 'upgrade.ps1'):
+                shutil.copyfile(installers / name, bundle / name)
+            (bundle / 'manifest.json').write_text('{"kind":"bundle"}', encoding='utf-8')
+            build_bundle.write_upgrade_manifest(bundle)
+            archive = build_bundle.archive_bundle('win-x64', bundle, base / 'dist')
+            with zipfile.ZipFile(archive) as zipped:
+                prefix = bundle.name + '/'
+                self.assertTrue(all(name.startswith(prefix) for name in zipped.namelist()))
+                for name in ('manifest.json', 'upgrade-manifest.json', 'upgrade.cmd',
+                             'upgrade.ps1', 'installers/upgrade.cmd', 'installers/upgrade.ps1'):
+                    self.assertIn(prefix + name, zipped.namelist())
+                for name in ('upgrade.cmd', 'upgrade.ps1'):
+                    self.assertEqual(zipped.read(prefix + name), zipped.read(prefix + 'installers/' + name))
+
     def test_non_ascii_powershell_sources_have_utf8_bom_for_windows_powershell(self) -> None:
         # PowerShell 5.1 ParseFile/execution interprets BOM-less bytes as ANSI.
         # UTF-8 Chinese can decode into smart quotes and become syntax errors.
@@ -131,7 +155,7 @@ class WindowsUpgradeStaticContractTests(unittest.TestCase):
         self.assertIn("Get-Content -LiteralPath $OldShim", self.main)
         self.assertNotRegex(self.ps, r"(?im)^\s*(?:&|\.)\s+\$OldShim\b")
         self.assertNotIn("Invoke-Expression", self.ps)
-        self.assertNotIn("install_windows.ps1", self.ps)
+        self.assertNotRegex(self.ps, r"(?i)(?<![a-z_])install_windows\.ps1")
         self.assertNotIn("configure_config.py", self.ps)
         self.assertIn("[Environment]::SetEnvironmentVariable($Name, $Value, 'Process')", self.ps)
         self.assertNotRegex(self.ps, r"SetEnvironmentVariable\([^\n]+['\"](?:User|Machine)['\"]\)")

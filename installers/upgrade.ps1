@@ -58,6 +58,39 @@ function Assert-NoLinks([string] $Path, [switch] $AllowMissing) {
   $Link = Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1
   if ($Link) { throw "Resolve linked/external data before upgrading: $($Link.FullName)" }
 }
+function Assert-InstalledLayout([string] $Root) {
+  # These are deployed paths, never paths in the old extracted installer.
+  foreach ($Relative in @(
+    'bin\hermes.cmd', 'runtime\venv\Scripts\python.exe', 'runtime\venv\Scripts\hermes.exe',
+    'runtime\venv\pyvenv.cfg', 'runtime\hermes-agent\hermes_cli\main.py',
+    'runtime\commands\launch_windows.ps1', 'runtime\commands\shutdown_windows.ps1',
+    'runtime\commands\uninstall_windows.ps1'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root $Relative) -PathType Leaf)) {
+      throw "Incomplete installed layout: $Relative is missing. Select the existing installation root containing bin and runtime."
+    }
+  }
+}
+function Assert-LauncherBindings([string] $Shim, [string] $Root) {
+  $Expected = @{
+    HERMES_OFFLINE_HOME = $Root
+    HERMES_PYTHON = (Join-Path $Root 'runtime\venv\Scripts\python.exe')
+  }
+  foreach ($Pair in @(
+    @('HERMES_BUNDLED_SKILLS', 'skills'), @('HERMES_OPTIONAL_SKILLS', 'optional-skills'),
+    @('HERMES_OPTIONAL_MCPS', 'optional-mcps'), @('HERMES_BUNDLED_LOCALES', 'locales'),
+    @('HERMES_BUNDLED_PLUGINS', 'plugins'), @('HERMES_WEB_DIST', 'web_dist'), @('HERMES_TUI_DIR', 'tui_dist')
+  )) { $Expected[$Pair[0]] = Join-Path (Join-Path $Root 'runtime\hermes-resources') $Pair[1] }
+  foreach ($Name in $Expected.Keys) {
+    $Assignments = @([regex]::Matches($Shim, ('(?im)^set "' + $Name + '=([^"\r\n]+)"\s*$')))
+    if ($Assignments.Count -ne 1) { throw "Original launcher must contain one static $Name assignment." }
+    $Value = $Assignments[0].Groups[1].Value
+    if ($Value -match '[%!]') { throw "Original launcher has an unresolved $Name path." }
+    if (-not [IO.Path]::IsPathRooted($Value) -or -not (Full-Path $Value).Equals((Full-Path $Expected[$Name]), [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Original launcher $Name does not match the selected installed layout. Resolve the installation path before upgrading."
+    }
+  }
+}
 function Set-ProcessEnv([string] $Name, [AllowNull()] [string] $Value) {
   if (-not $script:SavedEnvironment.ContainsKey($Name)) {
     $script:SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process')
@@ -77,6 +110,7 @@ function Get-FileDigest([string] $Path) {
   } finally { $Stream.Dispose() }
 }
 function Assert-BundleIntegrity {
+  Write-Host '[Preflight] Reading bundle checksum inventory and counting files...'
   $InventoryPath = Join-Path $script:Source 'upgrade-manifest.json'
   $Inventory = Get-Content -LiteralPath $InventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($Inventory.schema -ne 1 -or $Inventory.algorithm -ne 'sha256') { throw 'Unsupported bundle checksum inventory.' }
@@ -84,12 +118,20 @@ function Assert-BundleIntegrity {
   $Actual = @(Get-ChildItem -LiteralPath $script:Source -Recurse -Force -File | Where-Object { $_.FullName -ne $InventoryPath })
   if ($Entries.Count -eq 0 -or $Entries.Count -ne $Actual.Count) { throw 'Bundle inventory is incomplete. Extract a clean verified ZIP.' }
   $Seen = @{}
+  $Checked = 0
+  $ProgressClock = [Diagnostics.Stopwatch]::StartNew()
+  Write-Host ("[Preflight] Verifying SHA-256: 0/{0} files. This can take several minutes." -f $Entries.Count)
   foreach ($Entry in $Entries) {
     if ($Entry.Name -match '(^/|:|\\|(^|/)\.\.?(/|$)|//)' -or $Entry.Value -notmatch '^[a-f0-9]{64}$') { throw 'Unsafe checksum inventory entry.' }
     $Path = Full-Path (Join-Path $script:Source $Entry.Name)
     if (-not (Test-Within $Path $script:Source) -or $Seen.ContainsKey($Path)) { throw 'Checksum inventory escaped or duplicated a path.' }
     $Seen[$Path] = $true
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-FileDigest $Path) -ne $Entry.Value) { throw 'Bundle checksum mismatch. Re-extract the trusted release ZIP.' }
+    $Checked++
+    if ($ProgressClock.Elapsed.TotalSeconds -ge 5 -or $Checked -eq $Entries.Count) {
+      Write-Host ("[Preflight] Verifying SHA-256: {0}/{1} files." -f $Checked, $Entries.Count)
+      $ProgressClock.Restart()
+    }
   }
 }
 function Invoke-Helper([string] $Python, [string[]] $Arguments) {
@@ -364,6 +406,8 @@ function Restore-Transaction {
 
 try {
   if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitProcess) { throw 'Run 64-bit Windows PowerShell 5.1 or newer on Windows.' }
+  Write-Host '[Preflight] Starting Hermes upgrade checks.'
+  if ($WhatIfPreference) { Write-Host '[Preflight] WhatIf: read-only checks; no processes will be stopped and no upgrade will be applied.' }
   $script:InstallRoot = Full-Path $InstallDir
   $script:Runtime = Join-Path $script:InstallRoot 'runtime'
   $OldPython = Join-Path $script:Runtime 'venv\Scripts\python.exe'
@@ -373,8 +417,21 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDir 'manifest.json'))) { $SourceDir = Split-Path -Parent $PSScriptRoot }
   }
   $script:Source = Full-Path $SourceDir
+  Write-Host "[Preflight] New bundle: $script:Source"
+  Write-Host "[Preflight] Existing install: $script:InstallRoot"
+  foreach ($Required in @('manifest.json', 'upgrade-manifest.json', 'scripts\upgrade_support.py')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $script:Source $Required) -PathType Leaf)) {
+      throw 'Incomplete upgrade source. Run upgrade.cmd from the fully extracted hermes-offline-installer-win-x64 folder containing manifest.json and upgrade-manifest.json.'
+    }
+  }
   Assert-Separate $script:Source $script:InstallRoot
+  if (-not $Recover) {
+    Write-Host '[Preflight] Validating deployed bin/runtime layout; the old extracted installer is not required...'
+    Assert-InstalledLayout $script:InstallRoot
+  }
+  Write-Host '[Preflight] Checking new bundle directory links...'
   Assert-NoLinks $script:Source
+  Write-Host '[Preflight] Checking existing installation directory links...'
   Assert-NoLinks $script:InstallRoot
   $script:Helper = Join-Path $script:Source 'scripts\upgrade_support.py'
   $script:JournalPath = Join-Path $script:InstallRoot '.hermes-upgrade.json'
@@ -389,6 +446,7 @@ try {
   }
   if (-not (Test-Path -LiteralPath $OldShim)) { throw 'Original bin\hermes.cmd is missing from the installation and verified recovery point.' }
 
+  Write-Host '[Preflight] Loading Windows helpers and the original launcher environment...'
   # Add-Type on Windows PowerShell compiles in TEMP. Keep that outside user data,
   # including when the caller inherited the old shim's home/cache TEMP override.
   $CompileTemp = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'
@@ -409,6 +467,7 @@ namespace HermesUpgrade { public static class Native {
 
   # Read only the known generated shim's assignments; never execute a hand-edited script.
   $Shim = Get-Content -LiteralPath $OldShim -Raw -Encoding UTF8
+  Assert-LauncherBindings $Shim $script:InstallRoot
   foreach ($Match in [regex]::Matches($Shim, '(?im)reg query HKU\\(S-1-[0-9-]+)\\Environment')) {
     if ($Match.Groups[1].Value -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'Run upgrade as the original installation user; another user owns the launcher environment.' }
   }
@@ -420,6 +479,7 @@ namespace HermesUpgrade { public static class Native {
   Assert-Separate $script:HermesDataHome $script:InstallRoot
   Assert-Separate $script:HermesDataHome $script:Source
   if (-not $Recover -and -not (Test-Path -LiteralPath (Join-Path $script:HermesDataHome 'config.yaml'))) { throw 'Resolved original home is missing config.yaml.' }
+  Write-Host "[Preflight] Checking preserved home directory links: $script:HermesDataHome"
   Assert-NoLinks $script:HermesDataHome -AllowMissing:$Recover
   if ($RecoveryPrior -and $RecoveryPrior.home -ne $script:HermesDataHome) { throw 'Journal home differs from the original backup launcher.' }
   $KnownEnvironment = @('PYTHONUTF8', 'PYTHONIOENCODING', 'HERMES_HOME', 'HERMES_OFFLINE_HOME', 'HERMES_PYTHON', 'HERMES_BUNDLED_SKILLS', 'HERMES_OPTIONAL_SKILLS', 'HERMES_OPTIONAL_MCPS', 'HERMES_BUNDLED_LOCALES', 'HERMES_BUNDLED_PLUGINS', 'HERMES_WEB_DIST', 'HERMES_TUI_DIR', 'HERMES_DESKTOP_MANAGED', 'PIP_INDEX_URL', 'UV_DEFAULT_INDEX', 'HF_ENDPOINT', 'PLAYWRIGHT_DOWNLOAD_HOST', 'npm_config_registry', 'HF_HOME', 'HUGGINGFACE_HUB_CACHE', 'TORCH_HOME', 'TIKTOKEN_CACHE_DIR', 'MPLCONFIGDIR', 'NLTK_DATA', 'PLAYWRIGHT_BROWSERS_PATH', 'TEMP', 'TMP')
@@ -451,8 +511,10 @@ namespace HermesUpgrade { public static class Native {
   Set-ProcessEnv 'PIP_DISABLE_PIP_VERSION_CHECK' '1'
 
 
+  Write-Host '[Preflight] Inspecting running processes...'
   $Inventory = Get-Inventory
   $Owned = @(Get-OwnedProcesses $Inventory)
+  Write-Host '[Preflight] Inspecting services, scheduled tasks and external supervisors...'
   Assert-NoSupervisors $Inventory $Owned
   $Restart = @(Get-RestartSpecs $Owned)
 
@@ -479,12 +541,19 @@ namespace HermesUpgrade { public static class Native {
   }
   if ($Recover) { throw 'No interrupted upgrade needs recovery.' }
   if (-not (Test-Path -LiteralPath $OldPython)) { throw 'Original Python runtime is missing; use -Recover if an upgrade was interrupted.' }
+  Write-Host '[Preflight] Verifying Python and Hermes resolve inside the existing deployed runtime...'
+  Invoke-Helper $OldPython @('installed', '--source', $script:Runtime) | Out-Null
+  Write-Host '[Preflight] Reading the existing runtime version and configuration...'
   $Inspect = Invoke-Helper $OldPython @('inspect', '--home', $script:HermesDataHome)
   $BundleArgs = @('bundle', '--bundle', $script:Source, '--version', $Inspect.version)
   if ($AllowSameVersion) { $BundleArgs += '--allow-same' }
+  Write-Host '[Preflight] Checking target version and offline bundle compatibility...'
   $Bundle = Invoke-Helper $OldPython $BundleArgs
+  Write-Host '[Preflight] Measuring preserved home for backup space...'
   $HomeSize = Get-TreeSize $script:HermesDataHome
+  Write-Host '[Preflight] Measuring existing runtime for backup space...'
   $RuntimeSize = Get-TreeSize $script:Runtime
+  Write-Host '[Preflight] Measuring new bundle and checking free disk space...'
   $SourceSize = Get-TreeSize $script:Source
   Assert-FreeSpace $script:InstallRoot ($HomeSize + $RuntimeSize + 3 * $SourceSize + 1GB)
   Assert-FreeSpace $script:HermesDataHome ($HomeSize + 512MB)
@@ -492,6 +561,7 @@ namespace HermesUpgrade { public static class Native {
   Write-Host "Install: $script:InstallRoot"
   Write-Host "Preserved home: $script:HermesDataHome ($(@($Inspect.homes).Count) profile(s))"
   Write-Host "Plan: stop exact runtime owners, cold backup, rebuild offline at final path, official migration, authenticated readiness, retain rollback backup."
+  Write-Host '[Preflight] Checks passed.'
   if (-not $PSCmdlet.ShouldProcess($script:InstallRoot, 'Upgrade Hermes with a paired runtime/data rollback point')) { $script:ExitCode = 0; return }
 
   # The exclusive handle, not the existence of a stale lock file, owns the lock.
@@ -586,6 +656,8 @@ namespace HermesUpgrade { public static class Native {
   $Endpoint = Invoke-Helper $VenvPython @('endpoint', '--home', $script:HermesDataHome)
   if ($Endpoint.url -ne $OriginalEndpoint.url -or $Endpoint.auth_fingerprint -ne $OriginalEndpoint.auth_fingerprint) { throw 'Migration changed the effective API endpoint/authentication identity.' }
   if (@(Get-NetTCPConnection -State Listen -LocalPort $Endpoint.port -ErrorAction SilentlyContinue).Count) { throw 'The preserved API port is occupied by another owner.' }
+  Write-Host '[Upgrade] Checking all existing home files before starting the new runtime...'
+  Invoke-Helper $VenvPython @('preserved-tree', '--home', $script:HermesDataHome, '--backup', (Join-Path $Backup 'home')) | Out-Null
   Write-Journal 'validating'
   $Gateway = [pscustomobject]@{ file = $VenvPython; args = @('-m', 'hermes_cli.main', 'gateway', 'run'); kind = 'gateway' }
   Start-Spec $Gateway | Out-Null

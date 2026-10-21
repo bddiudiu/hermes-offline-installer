@@ -77,6 +77,20 @@ class BundleValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(upgrade.UpgradeError, "Downgrades"):
             upgrade.verify_bundle(self.bundle, "0.22.0", True)
 
+    def test_installed_interpreter_and_editable_source_require_final_runtime_paths(self) -> None:
+        runtime = (self.bundle / 'installed/runtime').resolve()
+        spec = types.SimpleNamespace(origin=str(runtime / 'hermes-agent/hermes_cli/__init__.py'))
+        with mock.patch.object(sys, 'prefix', str(runtime / 'venv')), \
+             mock.patch.object(sys, 'base_prefix', str(runtime / 'bundle-runtime/python')), \
+             mock.patch.object(upgrade.importlib.util, 'find_spec', return_value=spec):
+            self.assertTrue(upgrade.verify_installed_layout(runtime)['installed_layout_verified'])
+            with mock.patch.object(sys, 'base_prefix', str(self.bundle / 'deleted-old-extraction/python')):
+                with self.assertRaisesRegex(upgrade.UpgradeError, 'base interpreter outside'):
+                    upgrade.verify_installed_layout(runtime)
+            spec.origin = str(self.bundle / 'deleted-old-extraction/hermes-agent/hermes_cli/__init__.py')
+            with self.assertRaisesRegex(upgrade.UpgradeError, 'Hermes source is outside'):
+                upgrade.verify_installed_layout(runtime)
+
     def test_accepts_stable_numeric_versions_only(self) -> None:
         self.assertEqual(upgrade.version_tuple("0.21.4"), upgrade.version_tuple("0.21.4.0"))
         self.assertEqual(upgrade.version_tuple("0.21"), upgrade.version_tuple("0.21.0"))
@@ -355,6 +369,27 @@ class HomeAndMigrationTests(unittest.TestCase):
         skill.unlink()
         with self.assertRaises(upgrade.UpgradeError):
             upgrade.check_preserved(self.home, self.backup)
+
+    def test_complete_home_is_checked_before_startup_including_profiles_and_custom_data(self) -> None:
+        relatives = ('state.db', 'state.db-wal', 'state.db-shm', 'sessions/transcript.jsonl',
+                     'attachments/user.bin', 'custom-file.txt', 'profiles/work/state.db',
+                     'profiles/work/sessions/transcript.jsonl')
+        for relative in relatives:
+            for root in (self.home, self.backup):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'original user data')
+        self.assertTrue(upgrade.check_preserved(self.home, self.backup, all_files=True)['existing_files_preserved'])
+        for relative in relatives:
+            with self.subTest(relative=relative):
+                path = self.home / relative
+                path.write_bytes(b'unexpected overwrite before startup')
+                with self.assertRaisesRegex(upgrade.UpgradeError, 'user-owned asset changed'):
+                    upgrade.check_preserved(self.home, self.backup, all_files=True)
+                path.unlink()
+                with self.assertRaises(upgrade.UpgradeError):
+                    upgrade.check_preserved(self.home, self.backup, all_files=True)
+                path.write_bytes(b'original user data')
 
 
 class BundledSkillPreservationTests(unittest.TestCase):

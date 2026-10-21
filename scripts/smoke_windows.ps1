@@ -8,6 +8,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $Shell = Join-Path $PSHOME 'powershell.exe'
 $SystemPython = (Get-Command python).Source
+$DataHelper = Join-Path $PSScriptRoot 'smoke_upgrade_data.py'
 $Archive = (Resolve-Path $Archive).Path
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('hermes smoke ' + [char]0x9a8c + [char]0x6536 + '-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Work | Out-Null
@@ -40,6 +41,7 @@ function Set-SmokeContext([string] $Name) {
   $env:HERMES_NO_PAUSE = '1'
   $env:PYTHONUTF8 = '1'
   $env:PYTHONIOENCODING = 'utf-8'
+  $env:PYTHONDONTWRITEBYTECODE = '1'
   $env:PIP_NO_INDEX = '1'
   $env:UV_OFFLINE = '1'
   $env:ZHANCLAW_BASE_URL = 'https://example.invalid/v1'
@@ -150,6 +152,11 @@ try {
   $Old = Set-SmokeContext 'existing'
   Install-Portable $LegacyBundle 'legacy'
   Verify-Runtime $Old '0.21.5'
+  Remove-SmokeTree (Split-Path -Parent $LegacyBundle)
+  if (Test-Path -LiteralPath $LegacyBundle) { throw 'Legacy extracted installer was not removed.' }
+  & (Join-Path $Old.Root 'bin\hermes.cmd') --version
+  if ($LASTEXITCODE -ne 0) { throw 'Installed launcher still requires the removed old installer.' }
+  Write-Host 'Old extracted installer deleted; the deployed bin/runtime launcher still works.'
   # Missing defaults must be filled without changing explicit settings or credentials.
   $ConfigFixture = @'
 import os
@@ -169,13 +176,29 @@ p.write_text(yaml.safe_dump(c, sort_keys=False), encoding='utf-8')
 '@
   & $Old.Python -c $ConfigFixture
   if ($LASTEXITCODE -ne 0) { throw 'Legacy configuration fixture failed.' }
-  $UserAsset = Join-Path $Old.Data 'USER.md'
-  [IO.File]::WriteAllText($UserAsset, 'preserve this user-owned fixture', (New-Object Text.UTF8Encoding($false)))
+  & $Old.Python $DataHelper seed --home $Old.Data
+  if ($LASTEXITCODE -ne 0) { throw 'Existing database/profile/user-file fixture failed.' }
+  $WhatIfInventory = Join-Path $Work 'before-whatif.json'
+  & $SystemPython $DataHelper inventory --home $Old.Data --install $Old.Root --inventory $WhatIfInventory
+  if ($LASTEXITCODE -ne 0) { throw 'Could not inventory the installed runtime and home.' }
   $ConfigBefore = (Get-FileHash (Join-Path $Old.Data 'config.yaml') -Algorithm SHA256).Hash
   $EnvBefore = (Get-FileHash (Join-Path $Old.Data '.env') -Algorithm SHA256).Hash
-  $Upgrade = Join-Path $NewBundle 'installers\upgrade.ps1'
-  & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped -WhatIf
+  # Exercise the same root CMD entrypoint and positional install path users run.
+  $Upgrade = Join-Path $NewBundle 'upgrade.cmd'
+  $WhatIfLog = Join-Path $Work 'whatif.log'
+  & $Upgrade $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped -WhatIf 2>&1 | Tee-Object -FilePath $WhatIfLog
   if ($LASTEXITCODE -ne 0) { throw 'Legacy upgrade WhatIf failed.' }
+  & $SystemPython $DataHelper unchanged --home $Old.Data --install $Old.Root --inventory $WhatIfInventory
+  if ($LASTEXITCODE -ne 0) { throw 'WhatIf modified the installed runtime or home.' }
+  $WhatIfOutput = Get-Content -LiteralPath $WhatIfLog -Raw
+  foreach ($Expected in @('[Hermes upgrade]', '[Preflight] New bundle:', 'Verifying SHA-256:', '[Preflight] Checks passed.')) {
+    if (-not $WhatIfOutput.Contains($Expected)) { throw ('CMD WhatIf output is missing: ' + $Expected) }
+  }
+  if ((Get-FileHash (Join-Path $Old.Data 'config.yaml') -Algorithm SHA256).Hash -ne $ConfigBefore -or
+      (Get-FileHash (Join-Path $Old.Data '.env') -Algorithm SHA256).Hash -ne $EnvBefore -or
+      (Test-Path -LiteralPath (Join-Path $Old.Root '.hermes-upgrade.json')) -or
+      (Test-Path -LiteralPath (Join-Path $Old.Root '.hermes-upgrade.lock')) -or
+      (Test-Path -LiteralPath (Join-Path $Old.Root '.upgrade-backups'))) { throw 'CMD WhatIf changed configuration or created transaction state.' }
   Write-Host 'Legacy upgrade WhatIf passed; starting the occupied-port rollback exercise.'
 
   # Occupy the API port with an unrelated process: the upgrade must roll back
@@ -184,7 +207,7 @@ p.write_text(yaml.safe_dump(c, sort_keys=False), encoding='utf-8')
   Start-Sleep -Seconds 2
   if ($PortHolder.HasExited) { throw 'Could not create the occupied-port rollback fixture.' }
   $RollbackLog = Join-Path $Work 'rollback.log'
-  & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped *> $RollbackLog
+  & $Upgrade $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped *> $RollbackLog
   $RollbackExit = $LASTEXITCODE
   Stop-SmokeProcess $PortHolder
   $PortHolder = $null
@@ -196,13 +219,19 @@ p.write_text(yaml.safe_dump(c, sort_keys=False), encoding='utf-8')
     Get-Content -LiteralPath $RollbackLog -Tail 30
     throw 'Rollback did not reach the intended post-install failure point.'
   }
+  foreach ($Pair in @(@($Old.Data, 'home'), @($Old.Root + '\runtime', 'runtime'), @($Old.Root + '\bin', 'bin'))) {
+    & $SystemPython $script:Helper compare --home $Pair[0] --backup (Join-Path (Read-Journal $Old).backup $Pair[1])
+    if ($LASTEXITCODE -ne 0) { throw 'Rollback did not restore the full runtime/bin/home snapshot.' }
+  }
+  & $SystemPython $DataHelper verify --home $Old.Data
+  if ($LASTEXITCODE -ne 0) { throw 'Rollback lost existing database/profile/user data.' }
   Verify-Runtime $Old '0.21.5'
   if ((Get-FileHash (Join-Path $Old.Data 'config.yaml') -Algorithm SHA256).Hash -ne $ConfigBefore -or
       (Get-FileHash (Join-Path $Old.Data '.env') -Algorithm SHA256).Hash -ne $EnvBefore) { throw 'Rollback changed preserved configuration.' }
   Write-Host 'Real legacy runtime and home rollback passed.'
 
   Write-Host 'Starting the successful legacy-to-new upgrade exercise.'
-  & $Shell -NoProfile -ExecutionPolicy Bypass -File $Upgrade -InstallDir $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped
+  & $Upgrade $Old.Root -HermesHome $Old.Data -SupervisorStopped -KeepStopped
   if ($LASTEXITCODE -ne 0 -or (Read-Journal $Old).phase -ne 'committed') { throw 'Legacy-to-new offline upgrade failed.' }
   Verify-Runtime $Old $Version
   $ConfigVerification = @'
@@ -225,10 +254,21 @@ assert c['platform_toolsets']['cli'] == ['hermes-cli']
 assert c['platforms']['api_server']['extra']['host'] == '127.0.0.1'
 assert c['mcp_servers'] == {'upgrade-fixture': {'enabled': False, 'command': 'fixture-mcp', 'args': []}}
 assert c['plugins'] == {'disabled': ['upgrade-fixture'], 'hook_callback_timeout': 7}
-assert (h / 'USER.md').read_text() == 'preserve this user-owned fixture'
+p = yaml.safe_load((h / 'profiles/work/config.yaml').read_text(encoding='utf-8'))
+assert p['model']['default'] == 'profile-upgrade-fixture-model'
+assert p['terminal']['timeout'] == 73
+assert p['security']['allow_lazy_installs'] is False
+assert (h / 'profiles/work/.env').read_text().strip() == 'UPGRADE_PROFILE_FIXTURE=preserve-profile-value'
 '@
   & $Old.Python -c $ConfigVerification
   if ($LASTEXITCODE -ne 0) { throw 'Upgrade configuration preservation/default merge verification failed.' }
+  & $SystemPython $DataHelper verify --home $Old.Data
+  if ($LASTEXITCODE -ne 0) { throw 'Successful upgrade lost existing database/profile/user data.' }
+  Remove-SmokeTree (Split-Path -Parent $NewBundle)
+  & (Join-Path $Old.Root 'bin\hermes.cmd') --version
+  if ($LASTEXITCODE -ne 0) { throw 'Upgraded launcher depends on the new extracted installer.' }
+  & $Shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'verify_windows.ps1')
+  if ($LASTEXITCODE -ne 0) { throw 'Installed layout verification failed after deleting both extracted installers.' }
   foreach ($Name in $SavedUserEnv.Keys) {
     if ([Environment]::GetEnvironmentVariable($Name, 'User') -ne $SavedUserEnv[$Name]) { throw ('Portable validation changed user environment: ' + $Name) }
   }

@@ -2,11 +2,13 @@
 
 `upgrade.cmd` 用于升级已有的 Windows 离线安装。它从**另一个目录中完整解压的新版 ZIP** 读取文件，在检查、备份后替换旧 runtime，并验证启动和回滚所需的状态。首次安装仍使用 `install.cmd`。
 
+**不需要旧版本 ZIP 或旧解压目录。** 旧环境只从最终安装目录的 `bin`、`runtime` 以及旧启动器记录的数据目录读取；新版 ZIP 提供升级脚本和新运行时。旧包解压目录删除后也使用相同升级命令。
+
 > 升级包含停机窗口。请先做独立备份，并安排可以停止 Hermes、ClawPanel 和外部守护程序的维护时间。下面的命令需要在新版 ZIP 的解压目录执行；不要把新版文件直接覆盖到旧安装目录。
 
 ## 1. 准备与只读预检
 
-1. 从可信发布方取得并验证适合 Windows x64 的新版离线 ZIP，完整解压到一个新目录，例如 `D:\Downloads\Hermes-new`。保留包内校验清单与全部文件，不要只复制 `upgrade.cmd`。
+1. 从可信发布方取得并验证适合 Windows x64 的新版离线 ZIP，完整解压到一个新目录，例如 `D:\Downloads\Hermes-new`。ZIP 内自带一层 `hermes-offline-installer-win-x64`，进入其中能看到 `upgrade.cmd`、`manifest.json` 和 `upgrade-manifest.json` 的目录。保留包内校验清单与全部文件，不要只复制 `upgrade.cmd`。
 2. 确认旧安装根目录，即包含 `runtime` 和 `bin` 的 `HERMES_OFFLINE_HOME`，而不是 `runtime` 子目录、Python 目录或仅存放配置的 `HERMES_HOME`。
 3. 在新版解压目录打开 CMD，先运行：
 
@@ -17,8 +19,51 @@
    默认产品路径的例子：
 
    ```cmd
+   cd /d "D:\Downloads\Hermes-new\hermes-offline-installer-win-x64"
    upgrade.cmd "C:\Program Files\StarSoftComm\ZhanClaw\Hermes" -WhatIf
    ```
+
+   PowerShell 中使用 `cd` 切换到同一目录，并用 `.\upgrade.cmd` 的形式调用：
+
+   ```powershell
+   cd "D:\Downloads\Hermes-new\hermes-offline-installer-win-x64"
+   .\upgrade.cmd "C:\Program Files\StarSoftComm\ZhanClaw\Hermes" -WhatIf
+   ```
+
+### ZIP 目录与已安装目录
+
+发布 ZIP 的关键结构如下。某些解压工具会额外创建同名外层目录，以实际能看到两个 manifest 的这一层为准：
+
+```text
+hermes-offline-installer-win-x64/
+  upgrade.cmd
+  upgrade.ps1
+  install.cmd
+  manifest.json
+  upgrade-manifest.json
+  UPGRADE.zh-CN.md
+  installers/
+  scripts/
+  runtime/python/
+  wheelhouse/
+  hermes-agent/
+  hermes-resources/
+  templates/
+```
+
+这里的 `runtime/python` 是安装介质内的 Python。已安装目录 `C:\Program Files\StarSoftComm\ZhanClaw\Hermes` 的关键结构是 `bin\hermes.cmd` 和 `runtime\venv\Scripts\python.exe`；用户配置通常另存于 `C:\ProgramData\SSC\Hermes`。两种目录结构不同是正常的：命令入口来自**新 ZIP**，第一个参数指向**旧安装根目录**。
+
+预检会检查已部署的 `runtime\commands\launch_windows.ps1`、`shutdown_windows.ps1`、`uninstall_windows.ps1`，以及 venv、源码和原启动器。原启动器的 runtime/Python/资源路径必须与传入的安装根一致；旧 Python 的基础解释器和 Hermes editable 源码也必须落在已部署的 `runtime\bundle-runtime`、`runtime\hermes-agent` 内。缺文件、残留旧解压路径或选错安装根时，先报错退出，不开始替换。
+
+升级在原位置重建 `runtime\venv`、`bundle-runtime`、`hermes-agent`、`hermes-resources`、`wheelhouse` 和 `templates`，保留原 `bin` 启动器、`runtime\commands`、用户环境变量与数据目录。正常运行继续使用安装目录 `bin\hermes.cmd`，不需要保存安装介质；处理中断恢复时仍须保留本次新版包和事务备份。
+
+### 预检输出与等待
+
+入口会先显示 `[Hermes upgrade]`，随后输出 `[Preflight]`、新包路径和旧安装路径。完整性校验先统计文件，再显示 `Verifying SHA-256: 已完成/总数`；校验期间约每 5 秒更新一次，完成当前文件后输出。进程、服务、计划任务、旧 Python 和磁盘空间检查也各有阶段提示。
+
+`-WhatIf` 仍会读取并校验完整包，包含两万多个文件时可能需要数分钟。最终出现 `Checks passed.` 和 PowerShell 的 WhatIf 计划才表示预检完成。旧的 **v0.22.2-106** 包在完整预检结束前没有这些提示，因此长时间空白不一定是命令未执行。不要通过删除校验清单或跳过检查来缩短等待。
+
+若执行后立即返回提示符，CMD 中运行 `echo %ERRORLEVEL%`、PowerShell 中查看 `$LASTEXITCODE`，保留退出码与完整输出。若一直等待，记录最后一条阶段提示。若连入口提示都没有，先确认当前使用的包版本和命令位置；本文新增的进度提示不会自动出现在已下载的旧包中。
 
 `-WhatIf` 只做读取与预检并显示计划，不停止进程，不备份、安装或修改旧目录和持久用户环境。PowerShell 的辅助代码编译可能使用系统临时目录。包内 SHA-256 清单检查解压内容完整性，不证明发布者身份；它不能替代可信来源或发布方的 ZIP 校验。预检会拒绝缺失或不匹配的包内校验数据、不安全的目录关系和不能可靠识别的安装状态。先处理报错，不要通过删掉清单或覆盖旧目录绕过检查。
 
@@ -95,6 +140,8 @@ exit /b %UPGRADE_EXIT%
 写入前验证现有值未改变，以临时文件原子替换配置；升级后再次检查所有原有配置值及敏感配置整段，只有 Hermes 管理的 `_config_version` 允许正常更新。官方迁移若改变已有设置或报告警告，升级失败并走完整回滚，不默默接受冲突。YAML 注释与引号由补齐步骤尽量保留，但上游官方迁移本身可能调整排版。
 
 home 的一致性备份在相关进程停止后进行。失败回滚使用完整 home 快照，而不只是恢复 `config.yaml` 或单个数据库文件，这样新版本启动时发生的数据迁移也能回退。home 外自定义存放的数据和外部数据库不在这个范围内，应由维护人员另行备份。
+
+迁移配置和同步 skills 后、启动新版运行时前，还会逐文件校验完整旧 home（含 profiles、数据库及 WAL/SHM、会话、附件和自定义文件）。配置按原键值语义比较，未修改的内置 skills 允许官方更新，其余原有文件必须存在且内容一致。运行时启动后的数据库 schema/WAL 等可能正常变化，因此不把数据库文件哈希不变当成成功升级的要求；Windows 验收另行检查原会话及消息内容仍可读取。
 
 内置 skills 使用上游官方同步逻辑：只有与旧包完全一致、没有任何用户修改的完整 skill 目录可更新到新版；自定义或已修改的 skill 文件继续受保护。官方同步维护 `.bundled_manifest`，升级检查不会把这份同步元数据的正常更新当成用户文件丢失。
 
