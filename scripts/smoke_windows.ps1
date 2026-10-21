@@ -219,8 +219,11 @@ p.write_text(yaml.safe_dump(c, sort_keys=False), encoding='utf-8')
     Get-Content -LiteralPath $RollbackLog -Tail 30
     throw 'Rollback did not reach the intended post-install failure point.'
   }
-  foreach ($Pair in @(@($Old.Data, 'home'), @($Old.Root + '\runtime', 'runtime'), @($Old.Root + '\bin', 'bin'))) {
-    & $SystemPython $script:Helper compare --home $Pair[0] --backup (Join-Path (Read-Journal $Old).backup $Pair[1])
+  foreach ($Name in @('home', 'runtime', 'bin')) {
+    $LivePath = if ($Name -eq 'home') { $Old.Data } else { Join-Path $Old.Root $Name }
+    $BackupPath = Join-Path (Read-Journal $Old).backup $Name
+    Write-Host ('Checking restored cold snapshot: ' + $Name)
+    & $SystemPython $script:Helper compare --home $LivePath --backup $BackupPath
     if ($LASTEXITCODE -ne 0) { throw 'Rollback did not restore the full runtime/bin/home snapshot.' }
   }
   & $SystemPython $DataHelper verify --home $Old.Data
