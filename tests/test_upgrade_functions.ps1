@@ -15,7 +15,7 @@ $SelectedFunctions = @(
   'Full-Path', 'Test-Within', 'Assert-Separate', 'Assert-NoLinks', 'Assert-InstalledLayout', 'Assert-LauncherBindings',
   'Quote-Argument', 'Split-Command', 'Get-RestartSpecs', 'Assert-RestartSpec',
   'Write-Journal', 'New-PrivateDirectory', 'Copy-Tree',
-  'Get-FileDigest', 'Assert-BundleIntegrity', 'Test-CommandOwnsPath', 'Assert-NoSupervisors'
+  'Get-FileDigest', 'Assert-BundleIntegrity', 'Test-CommandOwnsPath', 'Assert-NoSupervisors', 'Get-Inventory', 'Test-ProcessExited'
 )
 $Definitions = @($Ast.FindAll({ param($Node) $Node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))
 foreach ($Name in $SelectedFunctions) {
@@ -155,6 +155,36 @@ try {
     Assert-Throws { Assert-NoSupervisors @() @() } 'runtime-owned scheduled task still blocks upgrade'
   }
   Test-SupervisorActionFixtures
+
+  function Test-InventoryRaceFixtures {
+    $Incomplete = [pscustomobject]@{ ProcessId = 12345; Name = 'python.exe'; ExecutablePath = $null; CommandLine = $null; CreationDate = 'old' }
+    $Fresh = [pscustomobject]@{ ProcessId = 12345; Name = 'python.exe'; ExecutablePath = 'C:\deployed\python.exe'; CommandLine = 'python.exe fixture'; CreationDate = 'new' }
+    function Get-CimInstance {
+      [CmdletBinding()] param([string] $ClassName, [string] $Filter)
+      if (-not $Filter) { return $Incomplete }
+      if ($InventoryFixture -eq 'exited') { return }
+      if ($InventoryFixture -eq 'readable') { return $Fresh }
+      return $Incomplete
+    }
+    function Test-ProcessExited { param([int] $ProcessId) return $InventoryFixture -eq 'retained-exit' }
+    $InventoryFixture = 'exited'
+    Assert-Condition (@(Get-Inventory).Count -eq 0) 'an exited process is removed only after a fresh PID query confirms absence'
+    $InventoryFixture = 'readable'
+    $Refreshed = @(Get-Inventory)
+    Assert-Condition ($Refreshed.Count -eq 1 -and $Refreshed[0].CreationDate -eq 'new') 'a refreshed or reused PID retains its current identity and paths'
+    $InventoryFixture = 'retained-exit'
+    Assert-Condition (@(Get-Inventory).Count -eq 0) 'a retained CIM record is ignored only when the kernel confirms exit'
+    $InventoryFixture = 'unreadable'
+    Assert-Throws { Get-Inventory } 'a live unreadable runtime-like process still blocks the upgrade'
+  }
+  Test-InventoryRaceFixtures
+  Assert-Condition (-not (Test-ProcessExited $PID)) 'kernel exit check does not exempt the live test process'
+  Assert-Condition (Test-ProcessExited ([int]::MaxValue)) 'kernel exit check recognizes an absent PID'
+  $ExitedFixture = [Diagnostics.Process]::Start($env:ComSpec, '/d /c exit 0')
+  try {
+    $ExitedFixture.WaitForExit()
+    Assert-Condition (Test-ProcessExited $ExitedFixture.Id) 'kernel exit check handles a terminated process with a retained handle'
+  } finally { $ExitedFixture.Dispose() }
 
   $Python = Join-Path $script:Runtime 'venv\Scripts\python.exe'
   $Hermes = Join-Path $script:Runtime 'venv\Scripts\hermes.exe'

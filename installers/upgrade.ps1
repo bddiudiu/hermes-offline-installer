@@ -202,12 +202,39 @@ function Split-Command([string] $Line) {
     return $Args
   } finally { [HermesUpgrade.Native]::LocalFree($Pointer) | Out-Null }
 }
+function Test-ProcessExited([int] $ProcessId) {
+  $Process = $null
+  try {
+    $Process = [Diagnostics.Process]::GetProcessById($ProcessId)
+    return $Process.HasExited
+  } catch [ArgumentException] {
+    return $true # The PID no longer exists.
+  } catch {
+    return $false # Access denied/unknown state must never exempt a live owner.
+  } finally {
+    if ($Process) { $Process.Dispose() }
+  }
+}
 function Get-Inventory {
   $Items = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+  $Current = @()
   foreach ($Item in $Items) {
-    if ($Item.Name -match '^(pythonw?|hermes|node|uv)\.exe$' -and (-not $Item.ExecutablePath -or -not $Item.CommandLine)) { throw 'Cannot inspect the owner of a runtime-like process. Rerun as the original user with sufficient rights.' }
+    # Win32_Process can retain a terminating process after its path/command line
+    # disappears. Re-query the PID; never treat an unreadable LIVE owner as safe.
+    for ($Attempt = 0; $Attempt -lt 3 -and $Item -and $Item.Name -match '^(pythonw?|hermes|node|uv)\.exe$' -and (-not $Item.ExecutablePath -or -not $Item.CommandLine); $Attempt++) {
+      if ($Attempt) { Start-Sleep -Milliseconds 100 }
+      $Item = Get-CimInstance Win32_Process -Filter "ProcessId=$($Item.ProcessId)" -ErrorAction Stop
+    }
+    if (-not $Item) { continue }
+    if ($Item.Name -match '^(pythonw?|hermes|node|uv)\.exe$' -and (-not $Item.ExecutablePath -or -not $Item.CommandLine)) {
+      # An open handle can keep an exited process visible to WMI. Only the
+      # kernel's exit state (or confirmed PID absence) permits ignoring it.
+      if (Test-ProcessExited ([int]$Item.ProcessId)) { continue }
+      throw "Cannot inspect live runtime-like process $($Item.ProcessId) ($($Item.Name)). Rerun as the original user with sufficient rights."
+    }
+    $Current += $Item
   }
-  return $Items
+  return $Current
 }
 function Get-OwnedProcesses([object[]] $Inventory) {
   $Owned = @{}
