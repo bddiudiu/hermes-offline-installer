@@ -79,3 +79,32 @@ b9ad81224edbaacc34a58525cbfe8684d2035d7bdb556b460bbbc417e2a1ce75
 config.yaml
 0e3a9941f3966e75743d1e151dc14f6867089dd4bf1abc945a149902a0bc98e6
 ```
+
+## 2026-10-21：按最终部署目录升级的验收与重打包
+
+升级代码提交为 `028c52444070ad76278809068902507714abc97e`，包含已部署目录检查、原启动器路径绑定检查、旧 Python/editable 源码来源校验、启动前完整 home 文件校验，以及预检进度输出。升级源使用完整新版包；不读取旧版本 ZIP 或旧解压目录。仍在运行且无法确认归属的进程会阻止升级；针对已退出进程的 WMI 残留，先重新查询 PID，再用操作系统退出状态确认，不把残留记录当成存活进程。
+
+[Windows 验收任务 39583300513](https://github.com/bddiudiu/hermes-offline-installer/actions/runs/39583300513)最终 **success**，使用 Windows PowerShell 5.1、Python 3.14.7：
+
+- **124 项 Python/CMD 回归测试通过**，Windows 专用入口用例实际执行；**76 项 PowerShell 隔离函数检查通过**。
+- 新版完整离线安装、版本/依赖/配置与已认证 API readiness 通过。
+- 安装真实 `v0.21.5-92` 后，删除旧解压目录，再从最终安装目录的 `bin\hermes.cmd` 验证启动入口。
+- 从新版包运行 `upgrade.cmd <已安装根目录> -WhatIf`，完整安装树和 home 的文件清单/哈希保持不变。
+- 占用 API 端口触发失败，确认 `home`、`runtime`、`bin` 三棵树与冷备份完全一致；根 home 和 `profiles/work` 的数据库会话、消息及自定义文件保留。
+- 完成 `0.21.5 → 0.22.2` 升级；根 home 和命名 profile 分别补齐 6 项缺失运行配置，原模型选择、显式配置、凭据、MCP、插件及用户文件保持。
+- SQLite `quick_check`、原 session/message 查询通过。升级完成后删除新版解压目录，最终安装目录的命令入口与 `verify_windows.ps1` 仍通过。服务按 `-KeepStopped` 保持停止。
+
+此次使用 `packaging/repack_bundle.py`，以 SHA-256 固定的 `v0.22.2-106` ZIP 为运行时基础，刷新当前 installer/scripts/升级指南并重建完整校验清单。Hermes 源码、Python、wheels、资源及默认模板沿用已核验的基础包。该方式不升级 Hermes/Python/uv 版本或模板；版本/模板不匹配时拒绝重打包。
+
+Windows 验收并上传的安装 ZIP：
+
+```text
+hermes-offline-installer-win-x64.zip
+SHA-256: 506fe695ea264496504b61ed013c4f597593ee4ebc364cb20a9b6c87391429d1
+
+upgrade-manifest.json
+SHA-256: 89aed24101e9eda47beb13b48a2ffb4b1337201e66ae035e665a873238674b16
+已校验文件数: 22637
+```
+
+GitHub Actions artifact 为 `hermes-windows-candidate-39583300513`（ID `12340985774`），其中包含安装 ZIP、独立 config 与校验文件。此轮仅构建和验收，没有创建新 Release、上传 OSS 或推广根 `latest.json`。验收使用隔离 Windows runner；真实客户端/supervisor 与目标机器联调仍属于部署验收。
